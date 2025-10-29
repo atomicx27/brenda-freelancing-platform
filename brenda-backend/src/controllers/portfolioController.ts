@@ -342,8 +342,7 @@ export const getUserPublicPortfolio = async (req: Request, res: Response, next: 
 
     const where: any = {
       userId,
-      isPublic: true,
-      isActive: true
+      isPublic: true
     };
 
     if (category) {
