@@ -8,35 +8,55 @@ datasource db {
 }
 
 model User {
-  id               String          @id @default(cuid())
-  email            String          @unique
-  password         String
-  firstName        String
-  lastName         String
-  userType         UserType        @default(CLIENT)
-  isVerified       Boolean         @default(false)
-  isActive         Boolean         @default(true)
-  status           UserStatus      @default(PENDING_VERIFICATION)
-  avatar           String?
-  phone            String?
-  bio              String?
-  location         String?
-  website          String?
-  linkedin         String?
-  github           String?
-  twitter          String?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
-  lastLoginAt      DateTime?
-  company          CompanyProfile?
-  jobs             Job[]           @relation("JobOwner")
-  receivedMessages Message[]       @relation("MessageReceiver")
-  messages         Message[]       @relation("MessageSender")
-  portfolio        PortfolioItem[]
-  proposals        Proposal[]      @relation("ProposalAuthor")
-  reviews          Review[]        @relation("ReviewAuthor")
-  receivedReviews  Review[]        @relation("ReviewReceiver")
-  profile          UserProfile?
+  id                         String             @id @default(cuid())
+  email                      String             @unique
+  password                   String
+  firstName                  String
+  lastName                   String
+  userType                   UserType           @default(CLIENT)
+  isVerified                 Boolean            @default(false)
+  isActive                   Boolean            @default(true)
+  status                     UserStatus         @default(PENDING_VERIFICATION)
+  avatar                     String?
+  phone                      String?
+  bio                        String?
+  location                   String?
+  website                    String?
+  linkedin                   String?
+  github                     String?
+  twitter                    String?
+  createdAt                  DateTime           @default(now())
+  updatedAt                  DateTime           @updatedAt
+  lastLoginAt                DateTime?
+  automationLogs             AutomationLog[]
+  automationRules            AutomationRule[]
+  company                    CompanyProfile?
+  contentLikes               ContentLike[]
+  contentShares              ContentShare[]
+  emailCampaigns             EmailCampaign[]
+  eventAttendees             EventAttendee[]
+  forumComments              ForumComment[]
+  forumPosts                 ForumPost[]
+  groupPosts                 GroupPost[]
+  invoicesAsClient           Invoice[]          @relation("InvoiceClient")
+  invoicesAsFreelancer       Invoice[]          @relation("InvoiceFreelancer")
+  jobs                       Job[]              @relation("JobOwner")
+  knowledgeArticles          KnowledgeArticle[]
+  leadScores                 LeadScore[]
+  mentorshipAsMentee         Mentorship[]       @relation("MenteeMentorship")
+  mentorshipAsMentor         Mentorship[]       @relation("MentorMentorship")
+  receivedMessages           Message[]          @relation("MessageReceiver")
+  messages                   Message[]          @relation("MessageSender")
+  portfolio                  PortfolioItem[]
+  proposals                  Proposal[]         @relation("ProposalAuthor")
+  reviews                    Review[]           @relation("ReviewAuthor")
+  receivedReviews            Review[]           @relation("ReviewReceiver")
+  smartContractsAsClient     SmartContract[]    @relation("SmartContractClient")
+  smartContractsAsFreelancer SmartContract[]    @relation("SmartContractFreelancer")
+  socialConnectionsReceived  SocialConnection[] @relation("ConnectedUserSocialConnection")
+  socialConnections          SocialConnection[] @relation("UserSocialConnection")
+  userGroups                 UserGroupMember[]
+  profile                    UserProfile?
 
   @@map("users")
 }
@@ -62,30 +82,65 @@ model UserProfile {
 }
 
 model PortfolioItem {
-  id           String    @id @default(cuid())
+  id           String             @id @default(cuid())
   userId       String
   title        String
   description  String?
   category     String
-  tags         String[]  @default([])
-  images       String[]  @default([])
+  tags         String[]           @default([])
+  images       String[]           @default([])
   liveUrl      String?
   githubUrl    String?
-  technologies String[]  @default([])
+  technologies String[]           @default([])
   startDate    DateTime?
   endDate      DateTime?
-  isActive     Boolean   @default(true)
-  isPublic     Boolean   @default(true)
-  featured     Boolean   @default(false)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  isActive     Boolean            @default(true)
+  isPublic     Boolean            @default(true)
+  featured     Boolean            @default(false)
+  viewCount    Int                @default(0)
+  likeCount    Int                @default(0)
+  displayOrder Int                @default(0)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  views        PortfolioView[]
+  likes        PortfolioLike[]
 
   @@index([userId])
   @@index([category])
   @@index([isPublic])
   @@index([featured])
+  @@index([viewCount])
+  @@index([likeCount])
   @@map("portfolio_items")
+}
+
+model PortfolioView {
+  id              String        @id @default(cuid())
+  portfolioItemId String
+  userId          String?
+  ipAddress       String?
+  userAgent       String?
+  viewedAt        DateTime      @default(now())
+  portfolioItem   PortfolioItem @relation(fields: [portfolioItemId], references: [id], onDelete: Cascade)
+
+  @@index([portfolioItemId])
+  @@index([userId])
+  @@index([viewedAt])
+  @@map("portfolio_views")
+}
+
+model PortfolioLike {
+  id              String        @id @default(cuid())
+  portfolioItemId String
+  userId          String
+  createdAt       DateTime      @default(now())
+  portfolioItem   PortfolioItem @relation(fields: [portfolioItemId], references: [id], onDelete: Cascade)
+
+  @@unique([portfolioItemId, userId])
+  @@index([portfolioItemId])
+  @@index([userId])
+  @@map("portfolio_likes")
 }
 
 model CompanyProfile {
@@ -132,24 +187,26 @@ model CompanyProfile {
 }
 
 model Job {
-  id          String     @id @default(cuid())
-  title       String
-  description String
-  budget      Float?
-  budgetType  String?
-  duration    String?
-  skills      String[]
-  category    String
-  subcategory String?
-  location    String?
-  isRemote    Boolean    @default(false)
-  status      String     @default("OPEN")
-  ownerId     String
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-  deadline    DateTime?
-  owner       User       @relation("JobOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  proposals   Proposal[]
+  id             String          @id @default(cuid())
+  title          String
+  description    String
+  budget         Float?
+  budgetType     String?
+  duration       String?
+  skills         String[]
+  category       String
+  subcategory    String?
+  location       String?
+  isRemote       Boolean         @default(false)
+  status         String          @default("OPEN")
+  ownerId        String
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  deadline       DateTime?
+  invoices       Invoice[]
+  owner          User            @relation("JobOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  proposals      Proposal[]
+  smartContracts SmartContract[]
 
   @@map("jobs")
 }
@@ -201,6 +258,542 @@ model Message {
   @@map("messages")
 }
 
+model ForumCategory {
+  id          String      @id @default(cuid())
+  name        String
+  description String?
+  slug        String      @unique
+  color       String?
+  icon        String?
+  isActive    Boolean     @default(true)
+  sortOrder   Int         @default(0)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  posts       ForumPost[]
+
+  @@map("forum_categories")
+}
+
+model ForumPost {
+  id           String         @id @default(cuid())
+  title        String
+  content      String
+  slug         String         @unique
+  categoryId   String
+  authorId     String
+  isPinned     Boolean        @default(false)
+  isLocked     Boolean        @default(false)
+  isFeatured   Boolean        @default(false)
+  viewCount    Int            @default(0)
+  likeCount    Int            @default(0)
+  commentCount Int            @default(0)
+  tags         String[]
+  status       PostStatus     @default(PUBLISHED)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  comments     ForumComment[]
+  author       User           @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  category     ForumCategory  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@map("forum_posts")
+}
+
+model ForumComment {
+  id        String         @id @default(cuid())
+  content   String
+  postId    String
+  authorId  String
+  parentId  String?
+  isEdited  Boolean        @default(false)
+  likeCount Int            @default(0)
+  status    PostStatus     @default(PUBLISHED)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  author    User           @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  parent    ForumComment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   ForumComment[] @relation("CommentReplies")
+  post      ForumPost      @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@map("forum_comments")
+}
+
+model UserGroup {
+  id          String            @id @default(cuid())
+  name        String
+  description String?
+  slug        String            @unique
+  avatar      String?
+  coverImage  String?
+  category    String?
+  isPublic    Boolean           @default(true)
+  isActive    Boolean           @default(true)
+  memberCount Int               @default(0)
+  postCount   Int               @default(0)
+  rules       String?
+  tags        String[]
+  createdBy   String
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  posts       GroupPost[]
+  members     UserGroupMember[]
+
+  @@map("user_groups")
+}
+
+model UserGroupMember {
+  id       String    @id @default(cuid())
+  groupId  String
+  userId   String
+  role     GroupRole @default(MEMBER)
+  joinedAt DateTime  @default(now())
+  isActive Boolean   @default(true)
+  group    UserGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@map("user_group_members")
+}
+
+model GroupPost {
+  id           String     @id @default(cuid())
+  title        String
+  content      String
+  groupId      String
+  authorId     String
+  isPinned     Boolean    @default(false)
+  likeCount    Int        @default(0)
+  commentCount Int        @default(0)
+  tags         String[]
+  status       PostStatus @default(PUBLISHED)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  author       User       @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  group        UserGroup  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@map("group_posts")
+}
+
+model Mentorship {
+  id          String              @id @default(cuid())
+  mentorId    String
+  menteeId    String
+  title       String
+  description String?
+  category    String?
+  skills      String[]
+  status      MentorshipStatus    @default(PENDING)
+  startDate   DateTime?
+  endDate     DateTime?
+  isActive    Boolean             @default(true)
+  rating      Float?
+  feedback    String?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  sessions    MentorshipSession[]
+  mentee      User                @relation("MenteeMentorship", fields: [menteeId], references: [id], onDelete: Cascade)
+  mentor      User                @relation("MentorMentorship", fields: [mentorId], references: [id], onDelete: Cascade)
+
+  @@map("mentorships")
+}
+
+model MentorshipSession {
+  id           String        @id @default(cuid())
+  mentorshipId String
+  title        String
+  description  String?
+  scheduledAt  DateTime
+  duration     Int
+  status       SessionStatus @default(SCHEDULED)
+  notes        String?
+  rating       Float?
+  feedback     String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  mentorship   Mentorship    @relation(fields: [mentorshipId], references: [id], onDelete: Cascade)
+
+  @@map("mentorship_sessions")
+}
+
+model KnowledgeCategory {
+  id          String             @id @default(cuid())
+  name        String
+  description String?
+  slug        String             @unique
+  icon        String?
+  color       String?
+  sortOrder   Int                @default(0)
+  isActive    Boolean            @default(true)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  articles    KnowledgeArticle[]
+
+  @@map("knowledge_categories")
+}
+
+model KnowledgeArticle {
+  id          String            @id @default(cuid())
+  title       String
+  content     String
+  slug        String            @unique
+  categoryId  String
+  authorId    String
+  tags        String[]
+  isPublished Boolean           @default(false)
+  isFeatured  Boolean           @default(false)
+  viewCount   Int               @default(0)
+  likeCount   Int               @default(0)
+  helpCount   Int               @default(0)
+  sortOrder   Int               @default(0)
+  publishedAt DateTime?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  author      User              @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  category    KnowledgeCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@map("knowledge_articles")
+}
+
+model FAQ {
+  id          String   @id @default(cuid())
+  question    String
+  answer      String
+  category    String?
+  tags        String[]
+  isPublished Boolean  @default(true)
+  isFeatured  Boolean  @default(false)
+  viewCount   Int      @default(0)
+  helpCount   Int      @default(0)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("faqs")
+}
+
+model CommunityEvent {
+  id           String          @id @default(cuid())
+  title        String
+  description  String
+  slug         String          @unique
+  eventType    EventType
+  startDate    DateTime
+  endDate      DateTime?
+  location     String?
+  isOnline     Boolean         @default(false)
+  meetingLink  String?
+  maxAttendees Int?
+  isPublic     Boolean         @default(true)
+  isActive     Boolean         @default(true)
+  tags         String[]
+  image        String?
+  organizerId  String
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  attendees    EventAttendee[]
+
+  @@map("community_events")
+}
+
+model EventAttendee {
+  id       String           @id @default(cuid())
+  eventId  String
+  userId   String
+  status   AttendanceStatus @default(REGISTERED)
+  joinedAt DateTime         @default(now())
+  event    CommunityEvent   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId])
+  @@map("event_attendees")
+}
+
+model SocialConnection {
+  id              String           @id @default(cuid())
+  userId          String
+  connectedUserId String
+  status          ConnectionStatus @default(PENDING)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  connectedUser   User             @relation("ConnectedUserSocialConnection", fields: [connectedUserId], references: [id], onDelete: Cascade)
+  user            User             @relation("UserSocialConnection", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, connectedUserId])
+  @@map("social_connections")
+}
+
+model ContentLike {
+  id          String      @id @default(cuid())
+  userId      String
+  contentId   String
+  contentType ContentType
+  createdAt   DateTime    @default(now())
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, contentId, contentType])
+  @@map("content_likes")
+}
+
+model ContentShare {
+  id          String      @id @default(cuid())
+  userId      String
+  contentId   String
+  contentType ContentType
+  platform    String?
+  createdAt   DateTime    @default(now())
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("content_shares")
+}
+
+model AutomationRule {
+  id           String            @id @default(cuid())
+  name         String
+  description  String?
+  userId       String
+  type         AutomationType
+  trigger      AutomationTrigger
+  conditions   Json
+  actions      Json
+  isActive     Boolean           @default(true)
+  priority     Int               @default(0)
+  lastRun      DateTime?
+  nextRun      DateTime?
+  runCount     Int               @default(0)
+  successCount Int               @default(0)
+  errorCount   Int               @default(0)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  logs         AutomationLog[]
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("automation_rules")
+}
+
+model AutomationLog {
+  id        String           @id @default(cuid())
+  ruleId    String
+  userId    String
+  status    AutomationStatus
+  message   String?
+  data      Json?
+  error     String?
+  duration  Int?
+  createdAt DateTime         @default(now())
+  rule      AutomationRule   @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("automation_logs")
+}
+
+model SmartContract {
+  id           String            @id @default(cuid())
+  title        String
+  description  String?
+  jobId        String?
+  clientId     String
+  freelancerId String
+  templateId   String?
+  content      String
+  terms        Json
+  status       ContractStatus    @default(DRAFT)
+  version      String            @default("1.0")
+  signedAt     DateTime?
+  expiresAt    DateTime?
+  isActive     Boolean           @default(true)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  invoices     Invoice[]
+  client       User              @relation("SmartContractClient", fields: [clientId], references: [id], onDelete: Cascade)
+  freelancer   User              @relation("SmartContractFreelancer", fields: [freelancerId], references: [id], onDelete: Cascade)
+  job          Job?              @relation(fields: [jobId], references: [id])
+  template     ContractTemplate? @relation(fields: [templateId], references: [id])
+
+  @@map("smart_contracts")
+}
+
+model ContractTemplate {
+  id          String          @id @default(cuid())
+  name        String
+  description String?
+  category    String?
+  content     String
+  terms       Json
+  variables   Json
+  isPublic    Boolean         @default(false)
+  isActive    Boolean         @default(true)
+  usageCount  Int             @default(0)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  contracts   SmartContract[]
+
+  @@map("contract_templates")
+}
+
+model Invoice {
+  id                String         @id @default(cuid())
+  invoiceNumber     String         @unique
+  contractId        String?
+  clientId          String
+  freelancerId      String
+  jobId             String?
+  title             String
+  description       String?
+  items             Json
+  subtotal          Float
+  taxRate           Float          @default(0)
+  taxAmount         Float          @default(0)
+  total             Float
+  currency          String         @default("USD")
+  status            InvoiceStatus  @default(DRAFT)
+  dueDate           DateTime
+  paidAt            DateTime?
+  paymentMethod     String?
+  notes             String?
+  isRecurring       Boolean        @default(false)
+  recurringInterval String?
+  nextDueDate       DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  client            User           @relation("InvoiceClient", fields: [clientId], references: [id], onDelete: Cascade)
+  contract          SmartContract? @relation(fields: [contractId], references: [id])
+  freelancer        User           @relation("InvoiceFreelancer", fields: [freelancerId], references: [id], onDelete: Cascade)
+  job               Job?           @relation(fields: [jobId], references: [id])
+
+  @@map("invoices")
+}
+
+model EmailCampaign {
+  id          String         @id @default(cuid())
+  name        String
+  description String?
+  userId      String
+  type        CampaignType
+  status      CampaignStatus @default(DRAFT)
+  subject     String
+  content     String
+  template    String?
+  recipients  Json
+  filters     Json
+  schedule    Json
+  sentCount   Int            @default(0)
+  openCount   Int            @default(0)
+  clickCount  Int            @default(0)
+  bounceCount Int            @default(0)
+  scheduledAt DateTime?
+  sentAt      DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emails      EmailLog[]
+
+  @@map("email_campaigns")
+}
+
+model EmailLog {
+  id             String        @id @default(cuid())
+  campaignId     String
+  recipientId    String
+  recipientEmail String
+  status         EmailStatus   @default(PENDING)
+  sentAt         DateTime?
+  openedAt       DateTime?
+  clickedAt      DateTime?
+  bouncedAt      DateTime?
+  error          String?
+  createdAt      DateTime      @default(now())
+  campaign       EmailCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@map("email_logs")
+}
+
+model LeadScore {
+  id          String   @id @default(cuid())
+  userId      String
+  leadId      String
+  leadType    LeadType
+  score       Int      @default(0)
+  factors     Json
+  lastUpdated DateTime @default(now())
+  isActive    Boolean  @default(true)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, leadId, leadType])
+  @@map("lead_scores")
+}
+
+model JobTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  userId      String
+  template    Json
+  category    String?
+  skills      String[]
+  isPublic    Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  usageCount  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("job_templates")
+}
+
+model FollowUpRule {
+  id           String          @id @default(cuid())
+  name         String
+  description  String?
+  userId       String
+  trigger      FollowUpTrigger
+  conditions   Json
+  actions      Json
+  delay        Int
+  isActive     Boolean         @default(true)
+  runCount     Int             @default(0)
+  successCount Int             @default(0)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@map("follow_up_rules")
+}
+
+model Reminder {
+  id                String           @id @default(cuid())
+  title             String
+  description       String?
+  userId            String
+  type              ReminderType
+  relatedId         String?
+  relatedType       String?
+  dueDate           DateTime
+  isCompleted       Boolean          @default(false)
+  completedAt       DateTime?
+  isRecurring       Boolean          @default(false)
+  recurringInterval String?
+  nextDueDate       DateTime?
+  priority          ReminderPriority @default(MEDIUM)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  @@map("reminders")
+}
+
+model StatusUpdateRule {
+  id           String     @id @default(cuid())
+  name         String
+  description  String?
+  userId       String
+  entityType   EntityType
+  conditions   Json
+  newStatus    String
+  isActive     Boolean    @default(true)
+  runCount     Int        @default(0)
+  successCount Int        @default(0)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@map("status_update_rules")
+}
+
 enum UserType {
   CLIENT
   FREELANCER
@@ -212,4 +805,180 @@ enum UserStatus {
   INACTIVE
   SUSPENDED
   PENDING_VERIFICATION
+}
+
+enum PostStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+  DELETED
+}
+
+enum GroupRole {
+  MEMBER
+  MODERATOR
+  ADMIN
+  OWNER
+}
+
+enum MentorshipStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum SessionStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum EventType {
+  WORKSHOP
+  WEBINAR
+  MEETUP
+  CONFERENCE
+  TRAINING
+  NETWORKING
+  SOCIAL
+}
+
+enum AttendanceStatus {
+  REGISTERED
+  ATTENDING
+  ATTENDED
+  NO_SHOW
+  CANCELLED
+}
+
+enum ConnectionStatus {
+  PENDING
+  ACCEPTED
+  BLOCKED
+}
+
+enum ContentType {
+  FORUM_POST
+  GROUP_POST
+  KNOWLEDGE_ARTICLE
+  COMMENT
+}
+
+enum AutomationType {
+  JOB_POSTING
+  CONTRACT_GENERATION
+  INVOICING
+  EMAIL_MARKETING
+  LEAD_SCORING
+  FOLLOW_UP
+  STATUS_UPDATE
+  DEADLINE_REMINDER
+}
+
+enum AutomationTrigger {
+  SCHEDULED
+  EVENT_BASED
+  CONDITION_BASED
+  MANUAL
+}
+
+enum AutomationStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+  CANCELLED
+}
+
+enum ContractStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  SIGNED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  VIEWED
+  PAID
+  OVERDUE
+  CANCELLED
+  REFUNDED
+}
+
+enum CampaignType {
+  WELCOME
+  FOLLOW_UP
+  PROMOTIONAL
+  EDUCATIONAL
+  REMINDER
+  CUSTOM
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  COMPLETED
+  PAUSED
+  CANCELLED
+}
+
+enum EmailStatus {
+  PENDING
+  SENT
+  DELIVERED
+  OPENED
+  CLICKED
+  BOUNCED
+  FAILED
+}
+
+enum LeadType {
+  USER
+  JOB
+  PROPOSAL
+  CONTRACT
+}
+
+enum FollowUpTrigger {
+  JOB_CREATED
+  PROPOSAL_SUBMITTED
+  CONTRACT_SIGNED
+  INVOICE_SENT
+  PAYMENT_RECEIVED
+  DEADLINE_APPROACHING
+  CUSTOM
+}
+
+enum ReminderType {
+  JOB_DEADLINE
+  CONTRACT_EXPIRY
+  INVOICE_DUE
+  PAYMENT_DUE
+  FOLLOW_UP
+  CUSTOM
+}
+
+enum ReminderPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum EntityType {
+  JOB
+  CONTRACT
+  INVOICE
+  PROPOSAL
+  USER
 }

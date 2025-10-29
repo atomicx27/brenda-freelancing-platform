@@ -1,9 +1,12 @@
+// Load environment variables first
+import dotenv from 'dotenv';
+dotenv.config();
+
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
-import dotenv from 'dotenv';
 
 // Import routes
 import authRoutes from './routes/auth';
@@ -16,13 +19,17 @@ import proposalRoutes from './routes/proposals';
 import messageRoutes from './routes/messages';
 import reviewRoutes from './routes/reviews';
 import analyticsRoutes from './routes/analytics';
+import adminRoutes from './routes/admin';
+import searchRoutes from './routes/search';
+import communityRoutes from './routes/community';
+import automationRoutes from './routes/automation';
+import emailRoutes from './routes/email';
 
 // Import middleware
 import { errorHandler } from './middleware/errorHandler';
 import { notFound } from './middleware/notFound';
 
-// Load environment variables
-dotenv.config();
+// Environment variables already loaded at the top
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -139,6 +146,11 @@ app.use('/api/proposals', proposalRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/search', searchRoutes);
+app.use('/api/community', communityRoutes);
+app.use('/api/automation', automationRoutes);
+app.use('/api/email', emailRoutes);
 
 // 404 handler
 app.use(notFound);

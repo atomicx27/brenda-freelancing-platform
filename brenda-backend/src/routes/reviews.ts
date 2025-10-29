@@ -28,3 +28,5 @@ router.delete('/:reviewId', deleteReview);
 router.post('/:reviewId/report', reportReview);
 
 export default router;
+
+

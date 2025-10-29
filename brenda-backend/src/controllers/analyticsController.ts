@@ -44,7 +44,7 @@ export const getFreelancerAnalytics = async (req: AuthenticatedRequest, res: Res
             authorId: userId,
             createdAt: { gte: startDate }
           },
-          _count: { id: true },
+          _count: { _all: true },
           _avg: { proposedRate: true }
         }),
 
@@ -73,7 +73,7 @@ export const getFreelancerAnalytics = async (req: AuthenticatedRequest, res: Res
             receiverId: userId,
             createdAt: { gte: startDate }
           },
-          _count: { id: true },
+          _count: { _all: true },
           _avg: { rating: true }
         }),
 
@@ -104,7 +104,7 @@ export const getFreelancerAnalytics = async (req: AuthenticatedRequest, res: Res
             status: 'ACCEPTED',
             createdAt: { gte: startDate }
           },
-          _count: { id: true }
+          _count: { _all: true }
         }),
 
         // Recent activity
@@ -147,12 +147,12 @@ export const getFreelancerAnalytics = async (req: AuthenticatedRequest, res: Res
             }
           }
         },
-        _count: { id: true }
+        _count: { _all: true }
       });
 
       return categories.map(cat => ({
         category: cat.category,
-        jobs: cat._count.id
+        jobs: cat._count._all
       }));
     });
 
@@ -189,10 +189,10 @@ export const getFreelancerAnalytics = async (req: AuthenticatedRequest, res: Res
       data: {
         period,
         overview: {
-          totalProposals: proposalStats._count.id,
+          totalProposals: proposalStats._count._all,
           acceptedJobs: jobStats.length,
           averageRating: reviewStats._avg.rating || 0,
-          totalReviews: reviewStats._count.id,
+          totalReviews: reviewStats._count._all,
           totalEarnings,
           averageProposalRate: proposalStats._avg.proposedRate || 0
         },
@@ -202,7 +202,7 @@ export const getFreelancerAnalytics = async (req: AuthenticatedRequest, res: Res
           averagePerJob: jobStats.length > 0 ? totalEarnings / jobStats.length : 0
         },
         performance: {
-          acceptanceRate: proposalStats._count.id > 0 ? (jobStats.length / proposalStats._count.id) * 100 : 0,
+          acceptanceRate: proposalStats._count._all > 0 ? (jobStats.length / proposalStats._count._all) * 100 : 0,
           categoryPerformance,
           topCategories: categoryPerformance.slice(0, 5)
         },
@@ -246,7 +246,7 @@ export const getClientAnalytics = async (req: AuthenticatedRequest, res: Respons
             ownerId: userId,
             createdAt: { gte: startDate }
           },
-          _count: { id: true },
+          _count: { _all: true },
           _avg: { budget: true }
         }),
 
@@ -299,7 +299,7 @@ export const getClientAnalytics = async (req: AuthenticatedRequest, res: Respons
             status: 'ACCEPTED',
             createdAt: { gte: startDate }
           },
-          _count: { id: true }
+          _count: { _all: true }
         }),
 
         // Category statistics
@@ -309,7 +309,7 @@ export const getClientAnalytics = async (req: AuthenticatedRequest, res: Respons
             ownerId: userId,
             createdAt: { gte: startDate }
           },
-          _count: { id: true },
+          _count: { _all: true },
           _avg: { budget: true }
         })
       ]);
@@ -375,7 +375,7 @@ export const getClientAnalytics = async (req: AuthenticatedRequest, res: Respons
       data: {
         period,
         overview: {
-          totalJobsPosted: jobStats._count.id,
+          totalJobsPosted: jobStats._count._all,
           totalProposals: proposalStats.length,
           totalSpending,
           averageJobBudget: jobStats._avg.budget || 0,
@@ -384,13 +384,13 @@ export const getClientAnalytics = async (req: AuthenticatedRequest, res: Respons
         spending: {
           total: totalSpending,
           monthlyTrend: monthlySpending,
-          averagePerJob: jobStats._count.id > 0 ? totalSpending / jobStats._count.id : 0
+          averagePerJob: jobStats._count._all > 0 ? totalSpending / jobStats._count._all : 0
         },
         performance: {
-          averageProposalsPerJob: jobStats._count.id > 0 ? proposalStats.length / jobStats._count.id : 0,
+          averageProposalsPerJob: jobStats._count._all > 0 ? proposalStats.length / jobStats._count._all : 0,
           categoryBreakdown: categoryStats.map(cat => ({
             category: cat.category,
-            jobs: cat._count.id,
+            jobs: cat._count._all,
             averageBudget: cat._avg.budget || 0
           }))
         },
@@ -443,7 +443,7 @@ export const getAdminAnalytics = async (req: AuthenticatedRequest, res: Response
           where: {
             createdAt: { gte: startDate }
           },
-          _count: { id: true }
+          _count: { _all: true }
         }),
 
         // Job statistics
@@ -451,7 +451,7 @@ export const getAdminAnalytics = async (req: AuthenticatedRequest, res: Response
           where: {
             createdAt: { gte: startDate }
           },
-          _count: { id: true },
+          _count: { _all: true },
           _avg: { budget: true }
         }),
 
@@ -460,7 +460,7 @@ export const getAdminAnalytics = async (req: AuthenticatedRequest, res: Response
           where: {
             createdAt: { gte: startDate }
           },
-          _count: { id: true },
+          _count: { _all: true },
           _avg: { proposedRate: true }
         }),
 
@@ -469,7 +469,7 @@ export const getAdminAnalytics = async (req: AuthenticatedRequest, res: Response
           where: {
             createdAt: { gte: startDate }
           },
-          _count: { id: true },
+          _count: { _all: true },
           _avg: { rating: true }
         }),
 
@@ -479,7 +479,7 @@ export const getAdminAnalytics = async (req: AuthenticatedRequest, res: Response
           where: {
             createdAt: { gte: startDate }
           },
-          _count: { id: true },
+          _count: { _all: true },
           _avg: { budget: true }
         }),
 
@@ -511,7 +511,7 @@ export const getAdminAnalytics = async (req: AuthenticatedRequest, res: Response
     const userTypeBreakdown = await withRetry(async () => {
       return await prisma.user.groupBy({
         by: ['userType'],
-        _count: { id: true }
+        _count: { _all: true }
       });
     });
 
@@ -565,10 +565,10 @@ export const getAdminAnalytics = async (req: AuthenticatedRequest, res: Response
       data: {
         period,
         overview: {
-          totalUsers: userStats._count.id,
-          totalJobs: jobStats._count.id,
-          totalProposals: proposalStats._count.id,
-          totalReviews: reviewStats._count.id,
+          totalUsers: userStats._count._all,
+          totalJobs: jobStats._count._all,
+          totalProposals: proposalStats._count._all,
+          totalReviews: reviewStats._count._all,
           averageJobBudget: jobStats._avg.budget || 0,
           averageProposalRate: proposalStats._avg.proposedRate || 0,
           averageRating: reviewStats._avg.rating || 0
@@ -576,12 +576,12 @@ export const getAdminAnalytics = async (req: AuthenticatedRequest, res: Response
         userBreakdown: {
           byType: userTypeBreakdown.map(type => ({
             type: type.userType,
-            count: type._count.id
+            count: type._count._all
           }))
         },
         categoryBreakdown: categoryStats.map(cat => ({
           category: cat.category,
-          jobs: cat._count.id,
+          jobs: cat._count._all,
           averageBudget: cat._avg.budget || 0
         })),
         trends: {
@@ -676,3 +676,4 @@ export const getPlatformHealth = async (req: AuthenticatedRequest, res: Response
     next(error);
   }
 };
+

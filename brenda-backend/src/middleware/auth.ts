@@ -94,6 +94,76 @@ export const requireVerification = (
   next();
 };
 
+// Middleware for token authentication (alias for authenticate)
+export const authenticateToken = authenticate;
+
+// Middleware to require admin role
+export const requireAdmin = (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): void => {
+  if (!req.user) {
+    throw createError('Access denied. User not authenticated.', 401);
+  }
+
+  if (req.user.userType !== 'ADMIN') {
+    throw createError('Access denied. Admin privileges required.', 403);
+  }
+
+  next();
+};
+
+// Optional authentication - doesn't fail if no token provided
+export const optionalAuth = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    let token: string | undefined;
+
+    // Get token from header if exists
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+      token = req.headers.authorization.split(' ')[1];
+    }
+
+    // If no token, just continue without setting user
+    if (!token) {
+      next();
+      return;
+    }
+
+    // Verify token if provided
+    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as JWTPayload;
+
+    // Get user from database
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        userType: true,
+        isVerified: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true
+      }
+    });
+
+    if (user && user.isActive) {
+      req.user = user as any;
+    }
+
+    next();
+  } catch (error) {
+    // Don't fail on invalid token, just continue without user
+    next();
+  }
+};
+
 // Helper function to create errors
 const createError = (message: string, statusCode: number): AppError => {
   const error = new Error(message) as AppError;

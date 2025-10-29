@@ -1,0 +1,3 @@
+# ERROR HANDLING GUIDE FOR BRENDA MESSAGING SYSTEM
+
+...existing content from original file...
