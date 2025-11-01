@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import prisma from '../utils/prisma';
 import { AuthenticatedRequest, AppError } from '../types';
 import { createError } from '../middleware/errorHandler';
+import { emitEvent } from '../services/events';
 
 // Helper for database retries
 const withRetry = async <T>(operation: () => Promise<T>, maxRetries = 3): Promise<T> => {
@@ -318,6 +319,15 @@ export const generateSmartContract = async (req: AuthenticatedRequest, res: Resp
       );
     }
 
+    // Emit event for EVENT_BASED rules
+    emitEvent('CONTRACT_GENERATED', {
+      contractId: contract.id,
+      clientId,
+      freelancerId,
+      jobId,
+      title
+    });
+
     res.status(201).json({
       status: 'success',
       message: 'Smart contract generated successfully',
@@ -475,6 +485,15 @@ export const generateInvoice = async (req: AuthenticatedRequest, res: Response, 
         }
       })
     );
+
+    // Emit event for EVENT_BASED rules
+    emitEvent('INVOICE_CREATED', {
+      invoiceId: invoice.id,
+      clientId,
+      freelancerId,
+      jobId,
+      total
+    });
 
     res.status(201).json({
       status: 'success',
@@ -845,30 +864,61 @@ export const createStatusUpdateRule = async (req: AuthenticatedRequest, res: Res
 // ==================== HELPER FUNCTIONS ====================
 
 // Execute automation actions
-const executeAutomationActions = async (rule: any) => {
+export const executeAutomationActions = async (rule: any, context?: any) => {
   const actions = rule.actions;
   
   for (const action of actions) {
-    switch (action.type) {
+    // Replace {{event.xxx}} templates with context data
+    const processedAction = resolveActionTemplates(action, context);
+    
+    switch (processedAction.type) {
       case 'SEND_EMAIL':
-        await sendAutomatedEmail(action);
+        await sendAutomatedEmail(processedAction);
         break;
       case 'CREATE_INVOICE':
-        await createAutomatedInvoice(action);
+        await createAutomatedInvoice(processedAction);
         break;
       case 'UPDATE_STATUS':
-        await updateEntityStatus(action);
+        await updateEntityStatus(processedAction);
         break;
       case 'CREATE_REMINDER':
-        await createAutomatedReminder(action);
+        await createAutomatedReminder(processedAction);
         break;
       case 'GENERATE_CONTRACT':
-        await generateAutomatedContract(action);
+        await generateAutomatedContract(processedAction);
         break;
       default:
-        console.log(`Unknown action type: ${action.type}`);
+        console.log(`Unknown action type: ${processedAction.type}`);
     }
   }
+};
+
+// Replace {{event.xxx}} placeholders in action strings
+const resolveActionTemplates = (value: any, context?: any): any => {
+  if (!context) return value;
+  
+  if (typeof value === 'string') {
+    return value.replace(/{{\s*event\.([\w.]+)\s*}}/g, (_m, path) => {
+      const parts = String(path).split('.');
+      let cur: any = context?.event ?? {};
+      for (const p of parts) cur = cur?.[p];
+      return cur == null ? '' : String(cur);
+    });
+  }
+  
+  if (Array.isArray(value)) {
+    return value.map(v => resolveActionTemplates(v, context));
+  }
+  
+  if (value && typeof value === 'object') {
+    const out: any = {};
+    for (const k of Object.keys(value)) {
+      out[k] = resolveActionTemplates(value[k], context);
+    }
+    return out;
+  }
+  
+  return value;
 };
 
 // Generate contract content
@@ -961,23 +1011,136 @@ const sendAutomatedEmail = async (action: any) => {
 };
 
 const createAutomatedInvoice = async (action: any) => {
-  console.log('Creating automated invoice:', action);
-  // Implement invoice creation logic
+  // Expected action shape: {
+  //  type: 'CREATE_INVOICE', clientId, freelancerId, jobId?, contractId?, title,
+  //  description?, items: [{ description, quantity, rate }], taxRate?, dueDate,
+  //  isRecurring?, recurringInterval?
+  // }
+  const {
+    contractId,
+    clientId,
+    freelancerId,
+    jobId,
+    title,
+    description,
+    items = [],
+    taxRate = 0,
+    dueDate,
+    isRecurring = false,
+    recurringInterval
+  } = action || {};
+
+  if (!clientId || !freelancerId || !title || !Array.isArray(items) || !dueDate) {
+    console.warn('CREATE_INVOICE action missing required fields.');
+    return;
+  }
+
+  const subtotal = items.reduce((sum: number, item: any) => sum + (Number(item.quantity || 0) * Number(item.rate || 0)), 0);
+  const taxAmount = subtotal * (Number(taxRate) / 100);
+  const total = subtotal + taxAmount;
+
+  const invoiceNumber = await generateInvoiceNumber();
+
+  await prisma.invoice.create({
+    data: {
+      invoiceNumber,
+      contractId: contractId || null,
+      clientId,
+      freelancerId,
+      jobId: jobId || null,
+      title,
+      description,
+      items,
+      subtotal,
+      taxRate: Number(taxRate) || 0,
+      taxAmount,
+      total,
+      dueDate: new Date(dueDate),
+      isRecurring: !!isRecurring,
+      recurringInterval: recurringInterval || null
+    }
+  });
 };
 
 const updateEntityStatus = async (action: any) => {
-  console.log('Updating entity status:', action);
-  // Implement status update logic
+  // Expected action shape: { type: 'UPDATE_STATUS', entityType, entityId, newStatus }
+  const { entityType, entityId, newStatus } = action || {};
+  if (!entityType || !entityId || !newStatus) {
+    console.warn('UPDATE_STATUS action missing required fields.');
+    return;
+  }
+
+  switch (entityType) {
+    case 'JOB':
+      await prisma.job.update({ where: { id: entityId }, data: { status: newStatus } as any });
+      break;
+    case 'CONTRACT':
+      await prisma.smartContract.update({ where: { id: entityId }, data: { status: newStatus as any } });
+      break;
+    case 'INVOICE':
+      await prisma.invoice.update({ where: { id: entityId }, data: { status: newStatus as any } });
+      break;
+    case 'PROPOSAL':
+      await prisma.proposal.update({ where: { id: entityId }, data: { status: newStatus } as any });
+      break;
+    case 'USER':
+      await prisma.user.update({ where: { id: entityId }, data: { status: newStatus as any } });
+      break;
+    default:
+      console.warn(`UPDATE_STATUS unsupported entityType: ${entityType}`);
+  }
 };
 
 const createAutomatedReminder = async (action: any) => {
-  console.log('Creating automated reminder:', action);
-  // Implement reminder creation logic
+  // Expected action shape: { type: 'CREATE_REMINDER', userId, title, description?, dueDate, priority?, relatedId?, relatedType?, type }
+  const { userId, title, description, dueDate, priority = 'MEDIUM', relatedId, relatedType, type = 'CUSTOM' } = action || {};
+  if (!userId || !title || !dueDate) {
+    console.warn('CREATE_REMINDER action missing required fields.');
+    return;
+  }
+  await prisma.reminder.create({
+    data: {
+      userId,
+      title,
+      description,
+      dueDate: new Date(dueDate),
+      priority,
+      relatedId: relatedId || null,
+      relatedType: relatedType || null,
+      type
+    }
+  });
 };
 
 const generateAutomatedContract = async (action: any) => {
-  console.log('Generating automated contract:', action);
-  // Implement contract generation logic
+  // Expected action shape: { type: 'GENERATE_CONTRACT', title, description?, jobId?, clientId, freelancerId, templateId?, terms?, expiresAt? }
+  const { title, description, jobId, clientId, freelancerId, templateId, terms = {}, expiresAt } = action || {};
+  if (!title || !clientId || !freelancerId) {
+    console.warn('GENERATE_CONTRACT action missing required fields.');
+    return;
+  }
+
+  let template = null as any;
+  if (templateId) {
+    template = await prisma.contractTemplate.findUnique({ where: { id: templateId } });
+  }
+  const content = generateContractContent(template, terms, { title, description, clientId, freelancerId, jobId });
+  await prisma.smartContract.create({
+    data: {
+      title,
+      description,
+      jobId: jobId || null,
+      clientId,
+      freelancerId,
+      templateId: templateId || null,
+      content,
+      terms,
+      expiresAt: expiresAt ? new Date(expiresAt) : null
+    }
+  });
+  if (templateId) {
+    await prisma.contractTemplate.update({ where: { id: templateId }, data: { usageCount: { increment: 1 } } });
+  }
 };
 
 

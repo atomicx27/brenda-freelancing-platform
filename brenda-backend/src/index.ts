@@ -24,6 +24,8 @@ import searchRoutes from './routes/search';
 import communityRoutes from './routes/community';
 import automationRoutes from './routes/automation';
 import emailRoutes from './routes/email';
+import monitoringRoutes from './routes/monitoring';
+import { startSchedulers } from './services/scheduler';
 
 // Import middleware
 import { errorHandler } from './middleware/errorHandler';
@@ -151,6 +153,7 @@ app.use('/api/search', searchRoutes);
 app.use('/api/community', communityRoutes);
 app.use('/api/automation', automationRoutes);
 app.use('/api/email', emailRoutes);
+app.use('/api/monitoring', monitoringRoutes);
 
 // 404 handler
 app.use(notFound);
@@ -163,6 +166,13 @@ app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🌐 Health check: http://localhost:${PORT}/health`);
+  // Start background schedulers (scheduled rules, email campaigns)
+  try {
+    startSchedulers();
+    console.log('⏱️  Schedulers started');
+  } catch (e) {
+    console.warn('Failed to start schedulers:', (e as any)?.message || e);
+  }
 });
 
 export default app;

@@ -753,6 +753,79 @@ class ApiService {
     });
   }
 
+  // Monitoring APIs
+  async getMonitoringHealth() {
+    return this.request('/monitoring/health');
+  }
+
+  async getMonitoringLogs(params = {}) {
+    const queryString = new URLSearchParams(params).toString();
+    return this.request(`/monitoring/logs${queryString ? `?${queryString}` : ''}`);
+  }
+
+  async getRuleMetrics(ruleId, params = {}) {
+    const queryString = new URLSearchParams(params).toString();
+    return this.request(`/monitoring/rules/${ruleId}/metrics${queryString ? `?${queryString}` : ''}`);
+  }
+
+  async getCampaignAnalytics(campaignId) {
+    return this.request(`/monitoring/campaigns/${campaignId}/analytics`);
+  }
+
+  // Additional Automation Rule Methods
+  async getAutomationRule(ruleId) {
+    return this.request(`/automation/rules/${ruleId}`);
+  }
+
+  async updateAutomationRule(ruleId, data) {
+    return this.request(`/automation/rules/${ruleId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteAutomationRule(ruleId) {
+    return this.request(`/automation/rules/${ruleId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Additional Email Campaign Methods
+  async getEmailCampaign(campaignId) {
+    return this.request(`/automation/email-campaigns/${campaignId}`);
+  }
+
+  async updateEmailCampaign(campaignId, data) {
+    return this.request(`/automation/email-campaigns/${campaignId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async sendEmailCampaign(campaignId) {
+    return this.request(`/automation/email-campaigns/${campaignId}/send`, {
+      method: 'POST',
+    });
+  }
+
+  // Additional Reminder Methods
+  async getReminder(reminderId) {
+    return this.request(`/automation/reminders/${reminderId}`);
+  }
+
+  async updateReminder(reminderId, data) {
+    return this.request(`/automation/reminders/${reminderId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteReminder(reminderId) {
+    return this.request(`/automation/reminders/${reminderId}`, {
+      method: 'DELETE',
+    });
+  }
+
   // Health check
   async healthCheck() {
     return fetch('http://localhost:5000/health').then(res => res.json());
