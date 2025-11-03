@@ -1,5 +1,5 @@
 // API service layer for Brenda frontend
-const API_BASE_URL = 'http://localhost:5000/api';
+const API_BASE_URL = 'http://localhost:5050/api';
 
 class ApiService {
   constructor() {

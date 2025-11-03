@@ -84,6 +84,8 @@ const Navbar = () => {
             useSublinksI(true);
             (subLinksII === true) ? useSublinksII(false) : null;
             (subLinksIII === true) ? useSubLinksIII(false) : null;
+            // Close More dropdown when opening this
+            (moreDp === "") ? useMoreDp("hidden") : null;
         } else {
             useSublinksI(false);
         }
@@ -95,6 +97,8 @@ const Navbar = () => {
             useSublinksII(true);
             (subLinksI === true) ? useSublinksI(false) : null;
             (subLinksIII === true) ? useSubLinksIII(false) : null;
+            // Close More dropdown when opening this
+            (moreDp === "") ? useMoreDp("hidden") : null;
         } else {
             useSublinksII(false);
         }
@@ -106,6 +110,8 @@ const Navbar = () => {
             useSubLinksIII(true);
             (subLinksI === true) ? useSublinksI(false) : null;
             (subLinksII === true) ? useSublinksII(false) : null;
+            // Close More dropdown when opening this
+            (moreDp === "") ? useMoreDp("hidden") : null;
         } else {
             useSubLinksIII(false);
         }
@@ -195,7 +201,7 @@ const Navbar = () => {
 
     return (
         <nav>
-            {/* ============================ First Nav Bar ================================ */}
+            {/* ============================ Primary (single) Nav Bar ================================ */}
             <div className="container mx-auto py-3 px-3 lg:flex items-center justify-between border-b hidden">
                 {/* ==================== Left =========================== */}
                 <div className="flex items-center">
@@ -209,7 +215,7 @@ const Navbar = () => {
                             onClick={() => navigate('/')}
                         />
                     </div>
-                    <ul className="flex 2xl:space-x-12 xl:space-x-9 space-x-6 2xl:ml-14 xl:ml-11 ml-6">
+                    <ul className="flex items-center 2xl:space-x-10 xl:space-x-8 space-x-5 2xl:ml-14 xl:ml-11 ml-6">
                         <li>
                             <a className={`cursor-pointer flex items-center text-[1.03rem] font-semibold hover:text-cyan-700 ${subLinksI === true ? "text-cyan-700" : "text-zinc-700"}`} onClick={FirstLinkHandle}> 
                                 Find Talent
@@ -371,47 +377,7 @@ const Navbar = () => {
                             </div>}
                         </li>
 
-        <li>
-                    <div className="flex items-center space-x-4">
-                        <MessageNotification />
-                        <NotificationBell />
-                        <Link to="/messages" className="cursor-pointer flex items-center text-[1.03rem] font-semibold hover:text-cyan-700 text-zinc-700">
-                            Messages
-                        </Link>
-                    </div>
-        </li>
-        <li>
-          <Link to="/dashboard" className="cursor-pointer flex items-center text-[1.03rem] font-semibold hover:text-cyan-700 text-zinc-700">
-            Dashboard
-          </Link>
-        </li>
-        {user?.userType === 'ADMIN' && (
-          <li>
-            <Link to="/dashboard/admin" className="cursor-pointer flex items-center text-[1.03rem] font-semibold hover:text-cyan-700 text-zinc-700">
-              Admin Panel
-            </Link>
-          </li>
-        )}
-                        <li>
-                            <Link to="/reviews/my-reviews" className="cursor-pointer flex items-center text-[1.03rem] font-semibold hover:text-cyan-700 text-zinc-700">
-                                Reviews
-                            </Link>
-                        </li>
-                        <li>
-                            <Link to="/search" className="cursor-pointer flex items-center text-[1.03rem] font-semibold hover:text-cyan-700 text-zinc-700">
-                                Advanced Search
-                            </Link>
-                        </li>
-                        <li>
-                            <Link to="/community" className="cursor-pointer flex items-center text-[1.03rem] font-semibold hover:text-cyan-700 text-zinc-700">
-                                Community
-                            </Link>
-                        </li>
-                        <li>
-                            <Link to="/automation" className="cursor-pointer flex items-center text-[1.03rem] font-semibold hover:text-cyan-700 text-zinc-700">
-                                Automation
-                            </Link>
-                        </li>
+                        {/* Consolidate extra links under More dropdown to reduce clutter */}
 
                         <li>
                             <a className={`cursor-pointer flex items-center text-[1.03rem] font-semibold hover:text-cyan-700 ${subLinksIII === true ? "text-cyan-700" : "text-zinc-700"}`} onClick={ThirdLinkHandle}> 
@@ -447,13 +413,42 @@ const Navbar = () => {
                                 Enterprise 
                             </Link>
                         </li>
+                        {/* Inline More dropdown (moved from second bar) */}
+                        {MoreLink.map((curVal) => (
+                          <li key={curVal.id} className="relative">
+                            <button 
+                              className={`font-semibold flex items-center hover:text-cyan-700 ${(moreDp === "hidden") ? "text-zinc-600" : "text-cyan-700"}`}
+                              onClick={() => {
+                                // Toggle More and close other dropdowns
+                                (moreDp === "hidden") ? useMoreDp("") : useMoreDp("hidden");
+                                (subLinksI === true) ? useSublinksI(false) : null;
+                                (subLinksII === true) ? useSublinksII(false) : null;
+                                (subLinksIII === true) ? useSubLinksIII(false) : null;
+                              }}
+                            >
+                              {curVal.name}
+                              <span className={`ml-1 transition ${(moreDp === "") ? "rotate-180" : "rotate-0"}`}> 
+                                {curVal.icon} 
+                              </span>
+                            </button>
+                            <ul className={`${moreDp} absolute font-semibold text-md bg-[#F3FFFC] shadow-lg border rounded-sm text-zinc-700 min-w-[17rem] right-[-1rem] top-7 z-40`}> 
+                              {curVal.subLink.map((curSubVal) => (
+                                <li key={curSubVal.id} className="px-5 py-3 hover:bg-[#e1f7fa] cursor-pointer hover:text-cyan-700">
+                                  <Link to={curSubVal.link}>
+                                    {curSubVal.name}
+                                  </Link>
+                                </li>
+                              ))}
+                            </ul>
+                          </li>
+                        ))}
                     </ul>
                 </div>
 
                 {/* ==================== Right =========================== */}
                 <div className="flex items-center">
                     <form 
-                        className="flex flex-grow border border-gray-300 rounded-full max-w-3xl items-center xl:px-6 px-4 py-2 hover:bg-[#F3FFFC] relative" 
+                        className="flex flex-grow border border-gray-300 rounded-full items-center xl:px-6 px-4 py-2 hover:bg-[#F3FFFC] relative min-w-[22rem] max-w-[36rem] ml-4"
                         onSubmit={search}
                     >
                         <FaChevronDown 
@@ -477,7 +472,7 @@ const Navbar = () => {
                         />}
 
                         
-                        <ul className={`absolute ${searchState} top-10 border left-3 w-[91.5%] shadow-lg border-gray-300 bg-[#F3FFFC] rounded-b-lg py-1 z-20`}>
+                        <ul className={`absolute ${searchState} top-10 border left-3 right-3 shadow-lg border-gray-300 bg-[#F3FFFC] rounded-b-lg py-1 z-20`}>
                             {SearchLink.map((curVal) => (
                                 <li className="py-2 xl:px-3 px-2 cursor-pointer hover:bg-[#eaf6f8]" key={curVal.id}>
                                     <Link to="/">
@@ -576,44 +571,7 @@ const Navbar = () => {
                 </div>
             </div>
 
-            {/* ==================== Second Nav Bar ===================== */}
-            <div className="container mx-auto py-3 px-3 hidden lg:block">
-                <ul className="flex items-center 2xl:space-x-20 xl:space-x-12 space-x-9">
-                    {SecondLink.map((curVal) => (
-                        <li className="text-zinc-600 font-semibold hover:text-cyan-700" key={curVal.id}>
-                            <Link to={curVal.link}>
-                                {curVal.name}
-                            </Link>
-                        </li>
-                    ))}
-
-                    {/* ================ Dropdown More ================= */}
-                    {MoreLink.map((curVal) => (
-                        <li key={curVal.id} className="relative">
-                            <button 
-                                className={`font-semibold flex items-center hover:text-cyan-700 ${(moreDp === "hidden") ? "text-zinc-600" : "text-cyan-700"}`}
-                                onClick={() => (moreDp === "hidden") ? useMoreDp("") : useMoreDp("hidden")}
-                            >
-                                {curVal.name}
-                                <span className={`ml-1 transition ${(moreDp === "") ? "rotate-180" : "rotate-0"}`}> 
-                                    {curVal.icon} 
-                                </span>
-                            </button>
-
-                            {/* =========== More Dropdown List =============== */}
-                            <ul className={`${moreDp} absolute font-semibold text-md bg-[#F3FFFC] shadow-lg border rounded-sm text-zinc-700 min-w-[17rem] right-[-1rem] top-7 z-10`}>
-                                {curVal.subLink.map((curSubVal) => (
-                                    <li key={curSubVal.id} className="px-5 py-3 hover:bg-[#e1f7fa] cursor-pointer hover:text-cyan-700">
-                                        <Link to={curSubVal.link}>
-                                            {curSubVal.name}
-                                        </Link>
-                                    </li>
-                                ))}
-                            </ul>
-                        </li>
-                    ))}
-                </ul>
-            </div>
+            {/* Second Nav Bar removed to avoid double-stacking */}
 
             {/* ==================== Mobile Nav Bar Start ====================== */}
             <div className="lg:hidden">
