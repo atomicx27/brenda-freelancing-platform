@@ -35,6 +35,18 @@ export const AuthProvider = ({ children }) => {
     };
 
     checkAuth();
+    
+    // Listen for global API unauthorized events to clear auth state
+    const handleUnauthorized = () => {
+      apiService.clearToken();
+      setUser(null);
+    };
+
+    window.addEventListener('api:unauthorized', handleUnauthorized);
+
+    return () => {
+      window.removeEventListener('api:unauthorized', handleUnauthorized);
+    };
   }, []);
 
   // Login function

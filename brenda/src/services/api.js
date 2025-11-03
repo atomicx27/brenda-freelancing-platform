@@ -42,9 +42,27 @@ class ApiService {
 
     try {
       const response = await fetch(url, config);
-      const data = await response.json();
+      let data = {};
+      try {
+        data = await response.json();
+      } catch (e) {
+        // ignore JSON parse errors for empty responses
+      }
 
       if (!response.ok) {
+        // If unauthorized, clear stored token and notify listeners so UI can react
+        if (response.status === 401) {
+          try {
+            this.clearToken();
+          } catch (e) {
+            // ignore
+          }
+          try {
+            window.dispatchEvent(new Event('api:unauthorized'));
+          } catch (e) {
+            // ignore in non-browser environments
+          }
+        }
         // If there are validation errors, include them in the error message
         if (data.errors && typeof data.errors === 'object') {
           const errorMessages = Object.entries(data.errors)
@@ -560,6 +578,26 @@ class ApiService {
     });
   }
 
+  async subscribeToPost(postId) {
+    return this.request(`/community/forum/posts/${postId}/subscribe`, {
+      method: 'POST'
+    });
+  }
+
+  async unsubscribeFromPost(postId) {
+    return this.request(`/community/forum/posts/${postId}/unsubscribe`, {
+      method: 'DELETE'
+    });
+  }
+
+  async getNotifications() {
+    return this.request('/community/notifications');
+  }
+
+  async isSubscribedToPost(postId) {
+    return this.request(`/community/forum/posts/${postId}/subscribed`);
+  }
+
   // User Groups APIs
   async getUserGroups(params = {}) {
     const queryString = new URLSearchParams(params).toString();
@@ -577,6 +615,71 @@ class ApiService {
     return this.request(`/community/groups/${groupId}/join`, {
       method: 'POST',
     });
+  }
+
+  async getGroupBySlug(slug) {
+    return this.request(`/community/groups/${slug}`);
+  }
+
+  async getGroupPosts(slug, params = {}) {
+    const queryString = new URLSearchParams(params).toString();
+    return this.request(`/community/groups/${slug}/posts${queryString ? `?${queryString}` : ''}`);
+  }
+
+  async createGroupPost(slug, data) {
+    return this.request(`/community/groups/${slug}/posts`, {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
+  async getGroupPost(slug, postId) {
+    return this.request(`/community/groups/${slug}/posts/${postId}`);
+  }
+
+  async getGroupPostComments(slug, postId, params = {}) {
+    const queryString = new URLSearchParams(params).toString();
+    return this.request(`/community/groups/${slug}/posts/${postId}/comments${queryString ? `?${queryString}` : ''}`);
+  }
+
+  async createGroupPostComment(slug, postId, data) {
+    return this.request(`/community/groups/${slug}/posts/${postId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
+  async checkGroupMembership(slug) {
+    return this.request(`/community/groups/${slug}/membership`);
+  }
+
+  // Join requests & moderation
+  async getGroupJoinRequests(groupId) {
+    return this.request(`/community/groups/${groupId}/requests`);
+  }
+
+  async approveJoinRequest(groupId, requestId) {
+    return this.request(`/community/groups/${groupId}/requests/${requestId}/approve`, {
+      method: 'POST'
+    });
+  }
+
+  async rejectJoinRequest(groupId, requestId) {
+    return this.request(`/community/groups/${groupId}/requests/${requestId}/reject`, {
+      method: 'POST'
+    });
+  }
+
+  async pinGroupPost(slug, postId) {
+    return this.request(`/community/groups/${slug}/posts/${postId}/pin`, { method: 'POST' });
+  }
+
+  async deleteGroupPost(slug, postId) {
+    return this.request(`/community/groups/${slug}/posts/${postId}`, { method: 'DELETE' });
+  }
+
+  async removeGroupMember(groupId, userId) {
+    return this.request(`/community/groups/${groupId}/members/${userId}`, { method: 'DELETE' });
   }
 
   // Mentorship APIs
@@ -823,6 +926,49 @@ class ApiService {
   async deleteReminder(reminderId) {
     return this.request(`/automation/reminders/${reminderId}`, {
       method: 'DELETE',
+    });
+  }
+
+  // AI-powered features
+  async enhanceJobDescription(data) {
+    return this.request('/ai/enhance-job-description', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async enhanceProposal(data) {
+    return this.request('/ai/enhance-proposal', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async generateJobSuggestions(data) {
+    return this.request('/ai/job-suggestions', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async analyzeProposal(data) {
+    return this.request('/ai/analyze-proposal', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async generateCoverLetter(data) {
+    return this.request('/ai/generate-cover-letter', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async suggestForumPost(data) {
+    return this.request('/ai/suggest-forum-post', {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
   }
 

@@ -7,6 +7,9 @@ import {
   updateUserStatus,
   getContentForModeration,
   moderateContent,
+  createForumCategory,
+  updateForumCategory,
+  deleteForumCategory,
   getSystemHealth,
   createBackup,
   getSystemLogs
@@ -29,6 +32,11 @@ router.patch('/users/:userId/status', updateUserStatus);
 // Content Moderation
 router.get('/moderation/:type', getContentForModeration);
 router.patch('/moderation/:contentId', moderateContent);
+
+// Forum Category Management
+router.post('/forum/categories', createForumCategory);
+router.put('/forum/categories/:categoryId', updateForumCategory);
+router.delete('/forum/categories/:categoryId', deleteForumCategory);
 
 // System Monitoring
 router.get('/system/health', getSystemHealth);

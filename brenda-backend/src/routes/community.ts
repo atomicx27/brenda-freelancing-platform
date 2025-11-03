@@ -12,6 +12,19 @@ import {
   getUserGroups,
   createUserGroup,
   joinUserGroup,
+  getUserGroupBySlug,
+  getGroupPosts,
+  createGroupPost,
+  getGroupPost,
+  createGroupPostComment,
+  checkGroupMembership,
+  // join requests & moderation
+  getGroupJoinRequests,
+  approveJoinRequest,
+  rejectJoinRequest,
+  togglePinGroupPost,
+  deleteGroupPost,
+  removeGroupMember,
   
   // Mentorship
   getMentorships,
@@ -29,6 +42,12 @@ import {
   likeContent,
   getUserConnections,
   sendConnectionRequest
+  ,
+  subscribeToPost,
+  unsubscribeFromPost,
+  getNotifications
+  ,
+  checkSubscription
 } from '../controllers/communityController';
 
 const router = express.Router();
@@ -39,11 +58,16 @@ const router = express.Router();
 router.get('/forum/categories', getForumCategories);
 router.get('/forum/posts', getForumPosts);
 router.get('/forum/posts/:postId', getForumPost);
+router.get('/forum/posts/:postId/subscribed', authenticate, (req, res, next) => { next(); });
 
 // ==================== USER GROUPS ROUTES ====================
 
 // Public user group routes
 router.get('/groups', getUserGroups);
+router.get('/groups/:slug', getUserGroupBySlug);
+router.get('/groups/:slug/posts', getGroupPosts);
+router.get('/groups/:slug/posts/:postId', getGroupPost);
+router.get('/groups/:groupId/requests', authenticate, getGroupJoinRequests);
 
 // ==================== MENTORSHIP ROUTES ====================
 
@@ -69,10 +93,24 @@ router.use(authenticate);
 // Authenticated forum routes
 router.post('/forum/posts', createForumPost);
 router.post('/forum/posts/:postId/comments', createForumComment);
+router.get('/forum/posts/:postId/subscribed', checkSubscription);
+router.post('/forum/posts/:postId/subscribe', subscribeToPost);
+router.delete('/forum/posts/:postId/unsubscribe', unsubscribeFromPost);
+
+// Notifications
+router.get('/notifications', getNotifications);
 
 // Authenticated user group routes
 router.post('/groups', createUserGroup);
 router.post('/groups/:groupId/join', joinUserGroup);
+router.post('/groups/:slug/posts', createGroupPost);
+router.post('/groups/:slug/posts/:postId/comments', createGroupPostComment);
+router.get('/groups/:slug/membership', checkGroupMembership);
+router.post('/groups/:groupId/requests/:requestId/approve', approveJoinRequest);
+router.post('/groups/:groupId/requests/:requestId/reject', rejectJoinRequest);
+router.post('/groups/:slug/posts/:postId/pin', togglePinGroupPost);
+router.delete('/groups/:slug/posts/:postId', deleteGroupPost);
+router.delete('/groups/:groupId/members/:userId', removeGroupMember);
 
 // Authenticated mentorship routes
 router.post('/mentorships', createMentorshipRequest);

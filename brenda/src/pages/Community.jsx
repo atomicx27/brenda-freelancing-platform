@@ -16,6 +16,10 @@ import {
   FaFilter
 } from 'react-icons/fa';
 
+import Forum from '../components/Forum.jsx';
+import CreateGroupModal from '../components/Groups/CreateGroupModal';
+import GroupCard from '../components/Groups/GroupCard';
+
 const Community = () => {
   const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState('forum');
@@ -28,6 +32,7 @@ const Community = () => {
     faqs: [],
     events: []
   });
+  const [createModalOpen, setCreateModalOpen] = useState(false);
 
   useEffect(() => {
     loadCommunityData();
@@ -129,7 +134,7 @@ const Community = () => {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold text-gray-800">User Groups</h2>
-        <button className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center space-x-2">
+        <button onClick={() => setCreateModalOpen(true)} className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center space-x-2">
           <FaPlus />
           <span>Create Group</span>
         </button>
@@ -137,26 +142,26 @@ const Community = () => {
       
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {data.userGroups.map((group) => (
-          <div key={group.id} className="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow">
-            {group.coverImage && (
-              <div className="h-32 bg-gradient-to-r from-green-400 to-blue-500"></div>
-            )}
-            <div className="p-6">
-              <h3 className="text-xl font-semibold text-gray-800 mb-2">{group.name}</h3>
-              <p className="text-gray-600 mb-4 line-clamp-2">{group.description}</p>
-              <div className="flex justify-between items-center">
-                <div className="flex items-center space-x-4 text-sm text-gray-500">
-                  <span>{group._count.members} members</span>
-                  <span>{group._count.posts} posts</span>
-                </div>
-                <button className="bg-green-600 text-white px-3 py-1 rounded-md hover:bg-green-700 text-sm">
-                  Join
-                </button>
-              </div>
-            </div>
-          </div>
+          <GroupCard key={group.id} group={group} onJoined={(id) => {
+            // increment member count locally for quick feedback
+            setData(prev => ({
+              ...prev,
+              userGroups: prev.userGroups.map(g => g.id === id ? { ...g, _count: { ...(g._count || {}), members: (g._count?.members || 0) + 1 } } : g)
+            }));
+          }} />
         ))}
       </div>
+      <CreateGroupModal open={createModalOpen} onClose={() => setCreateModalOpen(false)} onCreate={async (payload) => {
+        try {
+          const res = await apiService.createUserGroup(payload);
+          const newGroup = res?.data?.group || res?.data || null;
+          if (newGroup) {
+            setData(prev => ({ ...prev, userGroups: [newGroup, ...prev.userGroups] }));
+          }
+        } catch (err) {
+          console.error('Failed to create group', err);
+        }
+      }} />
     </div>
   );
 
@@ -315,7 +320,7 @@ const Community = () => {
 
     switch (activeTab) {
       case 'forum':
-        return renderForumContent();
+        return <Forum />;
       case 'groups':
         return renderGroupsContent();
       case 'mentorship':
@@ -325,7 +330,7 @@ const Community = () => {
       case 'events':
         return renderEventsContent();
       default:
-        return renderForumContent();
+        return <Forum />;
     }
   };
 

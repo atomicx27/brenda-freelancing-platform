@@ -503,6 +503,60 @@ export const getContentForModeration = async (req: AuthenticatedRequest, res: Re
   }
 };
 
+// -------------------- Forum Category Management (Admin) --------------------
+export const createForumCategory = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { name, slug, description = '', color = '#CBD5E1', icon = '', sortOrder = 0, isActive = true } = req.body;
+
+    if (!name || !slug) {
+      res.status(400).json({ success: false, message: 'name and slug are required' });
+      return;
+    }
+
+    const category = await withRetry(async () => {
+      return await prisma.forumCategory.create({
+        data: { name, slug, description, color, icon, sortOrder, isActive }
+      });
+    });
+
+    res.status(201).json({ success: true, data: { category } });
+  } catch (error) {
+    console.error('Error creating forum category:', error);
+    next(error);
+  }
+};
+
+export const updateForumCategory = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { categoryId } = req.params;
+    const updates = req.body;
+
+    const category = await withRetry(async () => {
+      return await prisma.forumCategory.update({ where: { id: categoryId }, data: updates });
+    });
+
+    res.json({ success: true, data: { category } });
+  } catch (error) {
+    console.error('Error updating forum category:', error);
+    next(error);
+  }
+};
+
+export const deleteForumCategory = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { categoryId } = req.params;
+
+    await withRetry(async () => {
+      return await prisma.forumCategory.delete({ where: { id: categoryId } });
+    });
+
+    res.json({ success: true, message: 'Category deleted' });
+  } catch (error) {
+    console.error('Error deleting forum category:', error);
+    next(error);
+  }
+};
+
 // Moderate content (approve/reject)
 export const moderateContent = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
   try {

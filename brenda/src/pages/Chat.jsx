@@ -140,14 +140,26 @@ export default function Chat() {
       
       // If userId is provided, select that conversation
       if (userId) {
+        // URL params are strings; ensure we compare IDs as strings to avoid type mismatch
         const conversation = response.data.conversations.find(
-          conv => conv.user.id === userId
+          conv => String(conv.user.id) === String(userId)
         )
         if (conversation) {
           setSelectedConversation(conversation)
           loadMessages(conversation.user.id)
         } else {
-          setError('Conversation not found. The user may have deleted their account or blocked you.')
+          // If there's no existing conversation, allow starting a new one.
+          // Create a lightweight placeholder so the UI shows a composer.
+          setSelectedConversation({
+            user: {
+              id: userId,
+              firstName: 'User',
+              lastName: '',
+              avatar: null
+            },
+            isNewConversation: true
+          })
+          setMessages([])
         }
       }
     } catch (err) {
@@ -193,39 +205,60 @@ export default function Chat() {
   }
 
   // Send a message
-  const handleSendMessage = async (content) => {
-    if (!selectedConversation) return
+  const handleSendMessage = async (content, overrideReceiverId = null) => {
+    const receiverId = overrideReceiverId || selectedConversation?.user?.id
+    if (!receiverId) {
+      setError('No recipient selected')
+      return
+    }
 
     try {
       setSendingMessage(true)
       clearError()
-      
+
       const response = await apiService.sendMessage({
-        receiverId: selectedConversation.user.id,
+        receiverId,
         content,
         messageType: 'TEXT'
       })
 
-      // Add message to local state
-      setMessages(prev => [...prev, response.data])
-      
-      // Update conversation list
-      setConversations(prev => 
-        prev.map(conv => 
-          conv.user.id === selectedConversation.user.id
-            ? { ...conv, lastMessage: response.data }
-            : conv
+      const message = response.data
+
+      // If we're already in the conversation with that user, append message
+      if (selectedConversation && String(selectedConversation.user.id) === String(receiverId)) {
+        setMessages(prev => [...prev, message])
+
+        // Update conversation list
+        setConversations(prev => 
+          prev.map(conv => 
+            String(conv.user.id) === String(receiverId)
+              ? { ...conv, lastMessage: message }
+              : conv
+          )
         )
-      )
+      } else {
+        // New conversation: construct it from the server response
+        const otherUser = message.senderId === user.id ? message.receiver : message.sender
+        const newConversation = {
+          user: otherUser,
+          lastMessage: message,
+          unreadCount: 0
+        }
+
+        // Prepend to conversation list and select it
+        setConversations(prev => [newConversation, ...prev])
+        setSelectedConversation(newConversation)
+        setMessages([message])
+      }
 
       // Scroll to bottom
       setTimeout(scrollToBottom, 100)
-      
+
       // Trigger event to update unread count in other components
       window.dispatchEvent(new CustomEvent('newMessageSent', { 
-        detail: { message: response.data } 
+        detail: { message } 
       }))
-      
+
       showSuccess('Message sent successfully!')
     } catch (err) {
       handleError(err, 'sendMessage')

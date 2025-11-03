@@ -291,11 +291,84 @@ export const createForumComment = async (req: AuthenticatedRequest, res: Respons
       })
     );
 
+    // Notify subscribers (simple in-app notifications)
+    try {
+      const subs = await withRetry(() => (prisma as any).forumSubscription.findMany({ where: { postId } }));
+      const userIds = (Array.isArray(subs) ? subs : []).map((s: any) => s.userId).filter((uid: any) => uid !== authorId);
+      // Also include post author if not the commenter
+      const post = await withRetry(() => prisma.forumPost.findUnique({ where: { id: postId } }));
+      if (post && post.authorId && post.authorId !== authorId && !userIds.includes(post.authorId)) {
+        userIds.push(post.authorId);
+      }
+
+      for (const uid of userIds) {
+  await withRetry(() => (prisma as any).notification.create({ data: { userId: uid, type: 'NEW_COMMENT', data: { postId, commentId: comment.id, actorId: authorId, message: 'New comment on a thread you follow' } } }));
+      }
+    } catch (e) {
+      console.warn('Failed to create notifications for subscribers', e);
+    }
+
     res.status(201).json({
       status: 'success',
       message: 'Comment created successfully',
       data: { comment }
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Subscribe to a forum post
+export const subscribeToPost = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { postId } = req.params;
+    const userId = req.user!.id;
+
+    const sub = await withRetry(() => (prisma as any).forumSubscription.upsert({
+      where: { userId_postId: { userId, postId } },
+      update: {},
+      create: { userId, postId }
+    }));
+
+    res.status(201).json({ status: 'success', message: 'Subscribed', data: { subscription: sub } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Unsubscribe from a forum post
+export const unsubscribeFromPost = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { postId } = req.params;
+    const userId = req.user!.id;
+
+  await withRetry(() => (prisma as any).forumSubscription.delete({ where: { userId_postId: { userId, postId } } }));
+
+    res.json({ status: 'success', message: 'Unsubscribed' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Get notifications for current user
+export const getNotifications = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const userId = req.user!.id;
+  const notifications = await withRetry(() => (prisma as any).notification.findMany({ where: { userId }, orderBy: { createdAt: 'desc' }, take: 50 }));
+    res.json({ status: 'success', data: { notifications } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Check if current user is subscribed to a post
+export const checkSubscription = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { postId } = req.params;
+    const userId = req.user!.id;
+
+  const existing = await withRetry(() => (prisma as any).forumSubscription.findUnique({ where: { userId_postId: { userId, postId } } }));
+    res.json({ status: 'success', data: { subscribed: !!existing } });
   } catch (error) {
     next(error);
   }
@@ -438,6 +511,23 @@ export const joinUserGroup = async (req: AuthenticatedRequest, res: Response, ne
       throw createError('You are already a member of this group', 400);
     }
 
+    // check if group requires approval
+    const group = await withRetry(() => prisma.userGroup.findUnique({ where: { id: groupId } }));
+    if (!group) throw createError('Group not found', 404);
+
+    if (group.requiresApproval) {
+      // create or upsert a join request
+      const existingRequest = await withRetry(() => prisma.userGroupJoinRequest.findUnique({ where: { groupId_userId: { groupId, userId } } }).catch(() => null));
+      if (existingRequest) {
+        res.status(200).json({ status: 'success', message: 'Join request already pending', data: { request: existingRequest } });
+        return;
+      }
+
+      const request = await withRetry(() => prisma.userGroupJoinRequest.create({ data: { groupId, userId, status: 'PENDING' } }));
+      res.status(201).json({ status: 'success', message: 'Join request submitted', data: { request } });
+      return;
+    }
+
     const member = await withRetry(() =>
       prisma.userGroupMember.create({
         data: {
@@ -461,6 +551,359 @@ export const joinUserGroup = async (req: AuthenticatedRequest, res: Response, ne
       message: 'Successfully joined the group',
       data: { member }
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Helper: check if user is owner or moderator
+const isOwnerOrModerator = async (userId: string, groupId: string) => {
+  const membership = await prisma.userGroupMember.findUnique({ where: { groupId_userId: { groupId, userId } } });
+  if (!membership) return false;
+  return membership.role === 'OWNER' || membership.role === 'MODERATOR';
+};
+
+// Get join requests for a group (owners/mods only)
+export const getGroupJoinRequests = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { groupId } = req.params;
+    const userId = req.user!.id;
+
+    const allowed = await isOwnerOrModerator(userId, groupId);
+    if (!allowed) throw createError('Unauthorized', 403);
+
+    const requests = await withRetry(() =>
+      prisma.userGroupJoinRequest.findMany({ where: { groupId, status: 'PENDING' }, include: { user: { select: { id: true, firstName: true, lastName: true, avatar: true } } } })
+    );
+
+    res.status(200).json({ status: 'success', data: { requests } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Approve join request
+export const approveJoinRequest = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { groupId, requestId } = req.params;
+    const userId = req.user!.id;
+
+    const allowed = await isOwnerOrModerator(userId, groupId);
+    if (!allowed) throw createError('Unauthorized', 403);
+
+    const request = await withRetry(() => prisma.userGroupJoinRequest.findUnique({ where: { id: requestId } }));
+    if (!request || request.groupId !== groupId) throw createError('Request not found', 404);
+
+    await withRetry(() => prisma.userGroupMember.create({ data: { groupId, userId: request.userId, role: 'MEMBER' } }));
+    await withRetry(() => prisma.userGroup.update({ where: { id: groupId }, data: { memberCount: { increment: 1 } } }));
+    await withRetry(() => prisma.userGroupJoinRequest.update({ where: { id: requestId }, data: { status: 'APPROVED' } }));
+
+    res.status(200).json({ status: 'success', message: 'Request approved' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Reject join request
+export const rejectJoinRequest = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { groupId, requestId } = req.params;
+    const userId = req.user!.id;
+
+    const allowed = await isOwnerOrModerator(userId, groupId);
+    if (!allowed) throw createError('Unauthorized', 403);
+
+    const request = await withRetry(() => prisma.userGroupJoinRequest.findUnique({ where: { id: requestId } }));
+    if (!request || request.groupId !== groupId) throw createError('Request not found', 404);
+
+    await withRetry(() => prisma.userGroupJoinRequest.update({ where: { id: requestId }, data: { status: 'REJECTED' } }));
+
+    res.status(200).json({ status: 'success', message: 'Request rejected' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Pin or unpin a group post (owner/mod)
+export const togglePinGroupPost = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { slug, postId } = req.params;
+    const userId = req.user!.id;
+
+    const group = await withRetry(() => prisma.userGroup.findUnique({ where: { slug } }));
+    if (!group) throw createError('Group not found', 404);
+
+    const allowed = await isOwnerOrModerator(userId, group.id);
+    if (!allowed) throw createError('Unauthorized', 403);
+
+    const post = await withRetry(() => prisma.groupPost.findUnique({ where: { id: postId } }));
+    if (!post) throw createError('Post not found', 404);
+
+    const updated = await withRetry(() => prisma.groupPost.update({ where: { id: postId }, data: { isPinned: { set: !post.isPinned } } }));
+
+    res.status(200).json({ status: 'success', data: { post: updated } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Delete a group post (owner/mod)
+export const deleteGroupPost = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { slug, postId } = req.params;
+    const userId = req.user!.id;
+
+    const group = await withRetry(() => prisma.userGroup.findUnique({ where: { slug } }));
+    if (!group) throw createError('Group not found', 404);
+
+    const allowed = await isOwnerOrModerator(userId, group.id);
+    if (!allowed) throw createError('Unauthorized', 403);
+
+    await withRetry(() => prisma.groupPost.delete({ where: { id: postId } }));
+    // decrement post count
+    await withRetry(() => prisma.userGroup.update({ where: { id: group.id }, data: { postCount: { decrement: 1 } } }));
+
+    res.status(200).json({ status: 'success', message: 'Post deleted' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Remove member from group (owner/mod)
+export const removeGroupMember = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { groupId, userId } = req.params;
+    const actorId = req.user!.id;
+
+    const allowed = await isOwnerOrModerator(actorId, groupId);
+    if (!allowed) throw createError('Unauthorized', 403);
+
+    const membership = await withRetry(() => prisma.userGroupMember.findUnique({ where: { groupId_userId: { groupId, userId } } }));
+    if (!membership) throw createError('Member not found', 404);
+
+    await withRetry(() => prisma.userGroupMember.delete({ where: { id: membership.id } }));
+    await withRetry(() => prisma.userGroup.update({ where: { id: groupId }, data: { memberCount: { decrement: 1 } } }));
+
+    res.status(200).json({ status: 'success', message: 'Member removed' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Get single user group by slug
+export const getUserGroupBySlug = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { slug } = req.params;
+
+    const group = await withRetry(() =>
+      prisma.userGroup.findUnique({
+        where: { slug },
+        include: {
+          _count: {
+            select: { members: true, posts: true }
+          }
+        }
+      })
+    );
+
+    if (!group) {
+      res.status(404).json({ status: 'error', message: 'Group not found' });
+      return;
+    }
+
+    res.status(200).json({ status: 'success', data: { group } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Get posts for a group (public)
+export const getGroupPosts = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { slug } = req.params;
+    const { page = 1, limit = 20 } = req.query;
+
+    const group = await withRetry(() => prisma.userGroup.findUnique({ where: { slug } }));
+    if (!group) {
+      res.status(404).json({ status: 'error', message: 'Group not found' });
+      return;
+    }
+
+    const skip = (Number(page) - 1) * Number(limit);
+
+    const [posts, total] = await withRetry(async () => {
+      return Promise.all([
+        prisma.groupPost.findMany({
+          where: { groupId: group.id, status: 'PUBLISHED' },
+          skip,
+          take: Number(limit),
+          orderBy: { createdAt: 'desc' },
+          include: {
+            author: { select: { id: true, firstName: true, lastName: true, avatar: true } }
+          }
+        }),
+        prisma.groupPost.count({ where: { groupId: group.id, status: 'PUBLISHED' } })
+      ]);
+    });
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        posts,
+        pagination: { total, page: Number(page), limit: Number(limit), pages: Math.ceil(total / Number(limit)) }
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Create a post inside a group (requires auth)
+export const createGroupPost = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { slug } = req.params;
+    const { title, content, tags = [] } = req.body;
+    const authorId = req.user!.id;
+
+    const group = await withRetry(() => prisma.userGroup.findUnique({ where: { slug } }));
+    if (!group) {
+      res.status(404).json({ status: 'error', message: 'Group not found' });
+      return;
+    }
+
+    // If group is private, ensure user is a member
+    if (!group.isPublic) {
+      const membership = await withRetry(() =>
+        prisma.userGroupMember.findUnique({ where: { groupId_userId: { groupId: group.id, userId: authorId } } })
+      );
+      if (!membership) {
+        res.status(403).json({ status: 'error', message: 'You must be a member to post in this group' });
+        return;
+      }
+    }
+
+    // Note: GroupPost model does not include a `slug` field in the schema.
+    // Create the post without a slug to match Prisma schema.
+    const post = await withRetry(() =>
+      prisma.groupPost.create({
+        data: { title, content, groupId: group.id, authorId, tags },
+        include: { author: { select: { id: true, firstName: true, lastName: true, avatar: true } } }
+      })
+    );
+
+    // increment group's postCount
+    await withRetry(() => prisma.userGroup.update({ where: { id: group.id }, data: { postCount: { increment: 1 } } }));
+
+    res.status(201).json({ status: 'success', message: 'Post created', data: { post } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Get group post details by id
+export const getGroupPost = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { slug, postId } = req.params;
+
+    const group = await withRetry(() => prisma.userGroup.findUnique({ where: { slug } }));
+    if (!group) {
+      res.status(404).json({ status: 'error', message: 'Group not found' });
+      return;
+    }
+
+    const post = await withRetry(() =>
+      prisma.groupPost.findUnique({
+        where: { id: postId },
+        include: {
+          author: { select: { id: true, firstName: true, lastName: true, avatar: true } },
+          comments: {
+            where: { parentId: null, status: 'PUBLISHED' },
+            include: {
+              author: { select: { id: true, firstName: true, lastName: true, avatar: true } },
+              replies: {
+                include: { author: { select: { id: true, firstName: true, lastName: true, avatar: true } } }
+              }
+            },
+            orderBy: { createdAt: 'desc' }
+          }
+        }
+      })
+    );
+
+    if (!post) {
+      res.status(404).json({ status: 'error', message: 'Post not found' });
+      return;
+    }
+
+    res.status(200).json({ status: 'success', data: { post } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Create comment on a group post
+export const createGroupPostComment = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { slug, postId } = req.params;
+    const { content, parentId } = req.body;
+    const userId = req.user!.id;
+
+    const group = await withRetry(() => prisma.userGroup.findUnique({ where: { slug } }));
+    if (!group) {
+      res.status(404).json({ status: 'error', message: 'Group not found' });
+      return;
+    }
+
+    const post = await withRetry(() => prisma.groupPost.findUnique({ where: { id: postId } }));
+    if (!post) {
+      res.status(404).json({ status: 'error', message: 'Post not found' });
+      return;
+    }
+
+    // If group is private, ensure user is member
+    if (!group.isPublic) {
+      const membership = await withRetry(() =>
+        prisma.userGroupMember.findUnique({ where: { groupId_userId: { groupId: group.id, userId } } })
+      );
+      if (!membership) {
+        res.status(403).json({ status: 'error', message: 'You must be a member to comment in this group' });
+        return;
+      }
+    }
+
+    const comment = await withRetry(() =>
+      prisma.groupPostComment.create({
+        data: { content, postId, authorId: userId, parentId },
+        include: { author: { select: { id: true, firstName: true, lastName: true, avatar: true } } }
+      })
+    );
+
+    // increment comment count
+    await withRetry(() => prisma.groupPost.update({ where: { id: postId }, data: { commentCount: { increment: 1 } } }));
+
+    res.status(201).json({ status: 'success', message: 'Comment added', data: { comment } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Check membership for current user in group
+export const checkGroupMembership = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { slug } = req.params;
+    const userId = req.user!.id;
+
+    const group = await withRetry(() => prisma.userGroup.findUnique({ where: { slug } }));
+    if (!group) {
+      res.status(404).json({ status: 'error', message: 'Group not found' });
+      return;
+    }
+
+    const membership = await withRetry(() =>
+      prisma.userGroupMember.findUnique({ where: { groupId_userId: { groupId: group.id, userId } } })
+    );
+
+    res.status(200).json({ status: 'success', data: { isMember: !!membership, role: membership?.role || null } });
   } catch (error) {
     next(error);
   }

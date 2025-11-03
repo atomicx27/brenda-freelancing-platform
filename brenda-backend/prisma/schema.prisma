@@ -38,7 +38,11 @@ model User {
   eventAttendees             EventAttendee[]
   forumComments              ForumComment[]
   forumPosts                 ForumPost[]
+  forumSubscriptions         ForumSubscription[]
+  notifications              Notification[]
   groupPosts                 GroupPost[]
+  groupPostComments         GroupPostComment[]
+  userGroupJoinRequests     UserGroupJoinRequest[]
   invoicesAsClient           Invoice[]          @relation("InvoiceClient")
   invoicesAsFreelancer       Invoice[]          @relation("InvoiceFreelancer")
   jobs                       Job[]              @relation("JobOwner")
@@ -293,6 +297,7 @@ model ForumPost {
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
   comments     ForumComment[]
+  subscriptions ForumSubscription[]
   author       User           @relation(fields: [authorId], references: [id], onDelete: Cascade)
   category     ForumCategory  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
@@ -318,6 +323,33 @@ model ForumComment {
   @@map("forum_comments")
 }
 
+model ForumSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  postId    String
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      ForumPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId])
+  @@map("forum_subscriptions")
+}
+
+model Notification {
+  id         String   @id @default(cuid())
+  userId     String
+  type       String
+  data       Json
+  isRead     Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
 model UserGroup {
   id          String            @id @default(cuid())
   name        String
@@ -327,6 +359,7 @@ model UserGroup {
   coverImage  String?
   category    String?
   isPublic    Boolean           @default(true)
+  requiresApproval Boolean      @default(false)
   isActive    Boolean           @default(true)
   memberCount Int               @default(0)
   postCount   Int               @default(0)
@@ -337,6 +370,7 @@ model UserGroup {
   updatedAt   DateTime          @updatedAt
   posts       GroupPost[]
   members     UserGroupMember[]
+  joinRequests UserGroupJoinRequest[]
 
   @@map("user_groups")
 }
@@ -370,8 +404,49 @@ model GroupPost {
   updatedAt    DateTime   @updatedAt
   author       User       @relation(fields: [authorId], references: [id], onDelete: Cascade)
   group        UserGroup  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  comments     GroupPostComment[]
 
   @@map("group_posts")
+}
+
+model GroupPostComment {
+  id        String         @id @default(cuid())
+  content   String
+  postId    String
+  authorId  String
+  parentId  String?
+  isEdited  Boolean        @default(false)
+  likeCount Int            @default(0)
+  status    PostStatus     @default(PUBLISHED)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  author    User           @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  parent    GroupPostComment?  @relation("GroupCommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   GroupPostComment[] @relation("GroupCommentReplies")
+  post      GroupPost      @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@map("group_post_comments")
+}
+
+model UserGroupJoinRequest {
+  id        String   @id @default(cuid())
+  groupId   String
+  userId    String
+  message   String?
+  status    JoinRequestStatus @default(PENDING)
+  createdAt DateTime @default(now())
+
+  group     UserGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@map("user_group_join_requests")
+}
+
+enum JoinRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 model Mentorship {

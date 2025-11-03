@@ -25,6 +25,7 @@ import communityRoutes from './routes/community';
 import automationRoutes from './routes/automation';
 import emailRoutes from './routes/email';
 import monitoringRoutes from './routes/monitoring';
+import aiRoutes from './routes/ai';
 import { startSchedulers } from './services/scheduler';
 
 // Import middleware
@@ -154,6 +155,7 @@ app.use('/api/community', communityRoutes);
 app.use('/api/automation', automationRoutes);
 app.use('/api/email', emailRoutes);
 app.use('/api/monitoring', monitoringRoutes);
+app.use('/api/ai', aiRoutes);
 
 // 404 handler
 app.use(notFound);

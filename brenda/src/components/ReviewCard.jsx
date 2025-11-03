@@ -31,6 +31,15 @@ const ReviewCard = ({
     }
   };
 
+  // Defensive defaults in case review or nested fields are missing
+  const author = review?.author || {};
+  const authorFirstName = author.firstName || '';
+  const authorLastName = author.lastName || '';
+  const authorAvatar = author.avatar || '';
+  const authorCompany = author.company || null;
+  const createdAt = review?.createdAt || new Date().toISOString();
+  const rating = typeof review?.rating === 'number' ? review.rating : 0;
+
   const handleReport = () => {
     if (onReport && reportReason && reportDescription.trim()) {
       onReport(review.id, {
@@ -71,32 +80,32 @@ const ReviewCard = ({
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center space-x-3">
           <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-            {review.author.avatar ? (
+            {authorAvatar ? (
               <img
-                src={review.author.avatar}
-                alt={review.author.firstName}
+                src={authorAvatar}
+                alt={authorFirstName}
                 className="w-10 h-10 rounded-full object-cover"
               />
             ) : (
               <span className="text-blue-600 font-semibold">
-                {review.author.firstName?.charAt(0)?.toUpperCase()}
+                {authorFirstName?.charAt(0)?.toUpperCase() || <FaUser />}
               </span>
             )}
           </div>
           <div>
             <div className="flex items-center space-x-2">
               <h4 className="font-semibold text-gray-900">
-                {review.author.firstName} {review.author.lastName}
+                {authorFirstName} {authorLastName}
               </h4>
-              {review.author.company && (
+              {authorCompany && (
                 <div className="flex items-center space-x-1 text-gray-600">
                   <FaBuilding className="w-3 h-3" />
-                  <span className="text-sm">{review.author.company.companyName}</span>
+                  <span className="text-sm">{authorCompany.companyName}</span>
                 </div>
               )}
             </div>
             <p className="text-sm text-gray-500">
-              {formatTimeAgo(review.createdAt)}
+              {formatTimeAgo(createdAt)}
             </p>
           </div>
         </div>
@@ -138,7 +147,7 @@ const ReviewCard = ({
       {/* Rating */}
       <div className="flex items-center space-x-2 mb-3">
         <div className="flex items-center space-x-1">
-          {renderStars(review.rating)}
+          {renderStars(rating)}
         </div>
         <span className="text-sm font-medium text-gray-700">
           {getRatingText(review.rating)}

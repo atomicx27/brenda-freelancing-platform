@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useLanguage } from '../contexts/LanguageContext';
 import apiService from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
+import ErrorMessage from './ErrorMessage.jsx';
 import { 
   FaComments, 
   FaHeart, 
@@ -8,7 +10,7 @@ import {
   FaReply, 
   FaEdit, 
   FaTrash, 
-  FaPin, 
+  FaThumbtack, 
   FaLock,
   FaUser,
   FaClock,
@@ -16,7 +18,9 @@ import {
   FaSpinner,
   FaPlus,
   FaSearch,
-  FaFilter
+  FaFilter,
+  FaTimes,
+  FaTag
 } from 'react-icons/fa';
 
 const Forum = () => {
@@ -34,7 +38,16 @@ const Forum = () => {
     categoryId: '',
     tags: []
   });
+  const [tagInput, setTagInput] = useState('');
+  const { user } = useAuth();
+  const [creatingPost, setCreatingPost] = useState(false);
+  const [createError, setCreateError] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState(null);
+  const [debugBanner, setDebugBanner] = useState(false);
   const [newComment, setNewComment] = useState('');
+  const [isSubscribed, setIsSubscribed] = useState(false);
+  const hasCategories = categories && categories.length > 0;
 
   useEffect(() => {
     loadCategories();
@@ -49,6 +62,42 @@ const Forum = () => {
       console.error('Error loading categories:', error);
     }
   };
+
+  const handleAiSuggest = async () => {
+    setAiError(null);
+    setAiLoading(true);
+    try {
+      // Require auth for AI suggestions
+      if (!user) {
+        throw new Error('Please sign in to use AI suggestions');
+      }
+      const response = await apiService.suggestForumPost({
+        title: newPost.title || 'Help me write a post',
+        category: newPost.categoryId || (categories[0] && categories[0].id) || '',
+        context: newPost.content || ''
+      });
+
+      if (response && response.data) {
+        const { suggestedTitle, suggestedContent, suggestedTags } = response.data;
+        setNewPost(prev => ({
+          ...prev,
+          title: suggestedTitle || prev.title,
+          content: suggestedContent || prev.content,
+          tags: suggestedTags || prev.tags
+        }));
+      }
+    } catch (error) {
+      console.error('AI suggestion error:', error);
+      // Friendly message when unauthorized
+      if (error.message && (error.message.includes('Access denied') || error.message.includes('No token') || error.message.includes('token'))) {
+        setAiError('Please sign in to use AI suggestions');
+      } else {
+        setAiError(error.message || 'Failed to get AI suggestions');
+      }
+    } finally {
+      setAiLoading(false);
+    }
+  }
 
   const loadPosts = async () => {
     setLoading(true);
@@ -67,27 +116,148 @@ const Forum = () => {
     }
   };
 
+  const openCreatePost = () => {
+    try {
+      // debug: ensure handler runs
+      // eslint-disable-next-line no-console
+      console.log('Opening create post modal');
+    } catch (e) {
+      // ignore
+    }
+    setShowCreatePost(true);
+    setDebugBanner(true);
+  };
+
+  // Hide debug banner after a short delay
+  useEffect(() => {
+    if (debugBanner) {
+      const t = setTimeout(() => setDebugBanner(false), 3000);
+      return () => clearTimeout(t);
+    }
+  }, [debugBanner]);
+
   const handleCreatePost = async (e) => {
     e.preventDefault();
+    setCreateError(null);
+    setCreatingPost(true);
+
+    // Build optimistic post
+    const tempId = `temp-post-${Date.now()}`;
+    const categoryObj = categories.find(c => String(c.id) === String(newPost.categoryId)) || { id: newPost.categoryId, name: '', color: '#CBD5E1' };
+    const tempPost = {
+      id: tempId,
+      title: newPost.title,
+      content: newPost.content,
+      category: { id: categoryObj.id, name: categoryObj.name || 'Uncategorized', color: categoryObj.color || '#CBD5E1' },
+      author: {
+        id: user?.id || 'me',
+        firstName: user?.firstName || 'You',
+        lastName: user?.lastName || '' ,
+        avatar: user?.avatar || null
+      },
+      _count: { comments: 0 },
+      isPinned: false,
+      isLocked: false,
+      createdAt: new Date().toISOString()
+    };
+
+    // Optimistically prepend post and close modal
+    setPosts(prev => [tempPost, ...prev]);
+    setShowCreatePost(false);
+
     try {
-      await apiService.createForumPost(newPost);
+      const response = await apiService.createForumPost(newPost);
+      const created = response?.data?.post || response?.post || null;
+      if (created) {
+        // Replace temp post with server post
+        setPosts(prev => prev.map(p => p.id === tempId ? created : p));
+      } else {
+        // Fallback: reload posts
+        loadPosts();
+      }
       setNewPost({ title: '', content: '', categoryId: '', tags: [] });
-      setShowCreatePost(false);
-      loadPosts();
     } catch (error) {
       console.error('Error creating post:', error);
+      // Remove temp post
+      setPosts(prev => prev.filter(p => p.id !== tempId));
+      setCreateError(error.message || 'Failed to create post');
+    } finally {
+      setCreatingPost(false);
     }
   };
 
   const handleCreateComment = async (postId) => {
     if (!newComment.trim()) return;
-    
+
+    // Optimistic comment
+    const tempId = `temp-${Date.now()}`;
+    const tempComment = {
+      id: tempId,
+      content: newComment,
+      author: {
+        id: user?.id || 'me',
+        firstName: user?.firstName || 'You',
+        lastName: user?.lastName || ''
+      },
+      createdAt: new Date().toISOString(),
+      likeCount: 0
+    };
+
+    // Attach optimistically
+    if (selectedPost) {
+      setSelectedPost(prev => ({
+        ...prev,
+        comments: [...(prev.comments || []), tempComment],
+        _count: { ...prev._count, comments: (prev._count?.comments || 0) + 1 }
+      }))
+    }
+
+    const commentContent = newComment;
+    setNewComment('');
+
     try {
-      await apiService.createForumComment(postId, { content: newComment });
-      setNewComment('');
-      loadPosts();
+      const response = await apiService.createForumComment(postId, { content: commentContent });
+
+      // Replace temp comment by reloading the post comments (simpler)
+      const refreshed = await apiService.getForumPost(postId);
+      if (refreshed && refreshed.data && refreshed.data.post) {
+        setSelectedPost(refreshed.data.post);
+      } else {
+        // As fallback, reload all posts
+        loadPosts();
+      }
     } catch (error) {
       console.error('Error creating comment:', error);
+      // Remove temp comment on failure
+      if (selectedPost) {
+        setSelectedPost(prev => ({
+          ...prev,
+          comments: (prev.comments || []).filter(c => c.id !== tempId),
+          _count: { ...prev._count, comments: Math.max((prev._count?.comments || 1) - 1, 0) }
+        }))
+      }
+      setCreateError(error.message || 'Failed to post comment');
+    }
+  };
+
+  const openPost = async (post) => {
+    try {
+      // Fetch authoritative post details
+      const resp = await apiService.getForumPost(post.id);
+      const postData = resp?.data?.post || post;
+      setSelectedPost(postData);
+
+      // Check subscription status for current user
+      try {
+        const subResp = await apiService.isSubscribedToPost(post.id);
+        setIsSubscribed(!!(subResp && subResp.data && subResp.data.subscribed));
+      } catch (e) {
+        // ignore subscription check errors
+        setIsSubscribed(false);
+      }
+    } catch (err) {
+      console.error('Failed to open post', err);
+      setSelectedPost(post);
     }
   };
 
@@ -128,7 +298,7 @@ const Forum = () => {
           </div>
           
           <div className="flex items-center space-x-2 mb-2">
-            {selectedPost.isPinned && <FaPin className="text-yellow-500" />}
+            {selectedPost.isPinned && <FaThumbtack className="text-yellow-500" />}
             {selectedPost.isLocked && <FaLock className="text-red-500" />}
             <span className={`px-2 py-1 rounded-full text-xs font-medium`} style={{ backgroundColor: selectedPost.category.color + '20', color: selectedPost.category.color }}>
               {selectedPost.category.name}
@@ -145,6 +315,26 @@ const Forum = () => {
             <div className="flex items-center space-x-2">
               <FaClock />
               <span>{formatDate(selectedPost.createdAt)}</span>
+            </div>
+            <div>
+              <button
+                onClick={async () => {
+                  try {
+                    if (!isSubscribed) {
+                      await apiService.subscribeToPost(selectedPost.id);
+                      setIsSubscribed(true);
+                    } else {
+                      await apiService.unsubscribeFromPost(selectedPost.id);
+                      setIsSubscribed(false);
+                    }
+                  } catch (err) {
+                    console.error('Subscription error', err);
+                  }
+                }}
+                className={`px-3 py-1 rounded-md text-sm ${isSubscribed ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}
+              >
+                {isSubscribed ? 'Subscribed' : 'Subscribe'}
+              </button>
             </div>
             <div className="flex items-center space-x-2">
               <FaEye />
@@ -200,7 +390,7 @@ const Forum = () => {
           
           {/* Comments List */}
           <div className="space-y-4">
-            {selectedPost.comments.map((comment) => (
+            {(selectedPost.comments || []).map((comment) => (
               <div key={comment.id} className="border-l-4 border-blue-200 pl-4 py-2">
                 <div className="flex items-center space-x-2 mb-2">
                   <FaUser className="text-gray-400" />
@@ -232,12 +422,17 @@ const Forum = () => {
 
   return (
     <div className="max-w-6xl mx-auto">
+      {debugBanner && (
+        <div className="fixed top-4 right-4 bg-green-600 text-white px-4 py-2 rounded-lg z-60">
+          Create modal opened
+        </div>
+      )}
       {/* Header */}
       <div className="bg-white rounded-lg shadow-md p-6 mb-6">
         <div className="flex justify-between items-center mb-4">
           <h1 className="text-3xl font-bold text-gray-800">Community Forum</h1>
           <button
-            onClick={() => setShowCreatePost(true)}
+            onClick={openCreatePost}
             className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center space-x-2"
           >
             <FaPlus />
@@ -296,19 +491,25 @@ const Forum = () => {
               
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
-                <select
-                  value={newPost.categoryId}
-                  onChange={(e) => setNewPost({ ...newPost, categoryId: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
-                >
-                  <option value="">Select a category</option>
-                  {categories.map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.name}
-                    </option>
-                  ))}
-                </select>
+                {!hasCategories ? (
+                  <div className="w-full px-3 py-2 border border-yellow-300 rounded-lg bg-yellow-50 text-yellow-800">
+                    No categories configured. Please contact an administrator to add forum categories.
+                  </div>
+                ) : (
+                  <select
+                    value={newPost.categoryId}
+                    onChange={(e) => setNewPost({ ...newPost, categoryId: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    required
+                  >
+                    <option value="">Select a category</option>
+                    {categories.map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
               
               <div>
@@ -321,6 +522,40 @@ const Forum = () => {
                   required
                 />
               </div>
+
+              {/* Tags input */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Tags</label>
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {newPost.tags.map((tag, idx) => (
+                    <span key={idx} className="inline-flex items-center gap-2 bg-gray-100 px-3 py-1 rounded-full text-sm">
+                      <FaTag className="w-3 h-3 text-gray-500" />
+                      <span>{tag}</span>
+                      <button type="button" onClick={() => setNewPost(prev => ({ ...prev, tags: prev.tags.filter((t, i) => i !== idx) }))} className="ml-1 text-gray-500 hover:text-red-500">
+                        <FaTimes className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+
+                <input
+                  type="text"
+                  value={tagInput}
+                  onChange={(e) => setTagInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ',') {
+                      e.preventDefault();
+                      const val = tagInput.trim().replace(/,+$/g, '');
+                      if (val && !newPost.tags.includes(val)) {
+                        setNewPost(prev => ({ ...prev, tags: [...prev.tags, val] }));
+                      }
+                      setTagInput('');
+                    }
+                  }}
+                  placeholder="Add a tag and press Enter"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
               
               <div className="flex justify-end space-x-3">
                 <button
@@ -331,13 +566,33 @@ const Forum = () => {
                   Cancel
                 </button>
                 <button
-                  type="submit"
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  type="button"
+                  onClick={handleAiSuggest}
+                  disabled={aiLoading || !hasCategories}
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                 >
-                  Create Post
+                  {aiLoading ? <FaSpinner className="animate-spin" /> : <FaPlus />}
+                  <span>{aiLoading ? 'Suggesting...' : 'AI Suggest'}</span>
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingPost || !hasCategories}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {creatingPost ? 'Creating...' : 'Create Post'}
                 </button>
               </div>
             </form>
+            {createError && (
+              <div className="mt-4">
+                <ErrorMessage error={createError} onDismiss={() => setCreateError(null)} />
+              </div>
+            )}
+            {aiError && (
+              <div className="mt-4">
+                <ErrorMessage error={aiError} onDismiss={() => setAiError(null)} />
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -356,9 +611,9 @@ const Forum = () => {
           </div>
         ) : (
           posts.map((post) => (
-            <div key={post.id} className="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow cursor-pointer" onClick={() => setSelectedPost(post)}>
+            <div key={post.id} className="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow cursor-pointer" onClick={() => openPost(post)}>
               <div className="flex items-center space-x-2 mb-3">
-                {post.isPinned && <FaPin className="text-yellow-500" />}
+                {post.isPinned && <FaThumbtack className="text-yellow-500" />}
                 {post.isLocked && <FaLock className="text-red-500" />}
                 <span className={`px-2 py-1 rounded-full text-xs font-medium`} style={{ backgroundColor: post.category.color + '20', color: post.category.color }}>
                   {post.category.name}

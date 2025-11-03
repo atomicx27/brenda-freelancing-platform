@@ -5,6 +5,7 @@ import SecondLink, { MoreLink } from "./SecondLink";
 import { useAuth } from "../../contexts/AuthContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import MessageNotification from "../MessageNotification.jsx";
+import NotificationBell from "../NotificationBell.jsx";
 import LanguageSwitcher from "../LanguageSwitcher.jsx";
 import { 
     FaCaretDown, 
@@ -371,9 +372,13 @@ const Navbar = () => {
                         </li>
 
         <li>
-          <Link to="/messages" className="cursor-pointer flex items-center text-[1.03rem] font-semibold hover:text-cyan-700 text-zinc-700">
-            Messages
-          </Link>
+                    <div className="flex items-center space-x-4">
+                        <MessageNotification />
+                        <NotificationBell />
+                        <Link to="/messages" className="cursor-pointer flex items-center text-[1.03rem] font-semibold hover:text-cyan-700 text-zinc-700">
+                            Messages
+                        </Link>
+                    </div>
         </li>
         <li>
           <Link to="/dashboard" className="cursor-pointer flex items-center text-[1.03rem] font-semibold hover:text-cyan-700 text-zinc-700">
