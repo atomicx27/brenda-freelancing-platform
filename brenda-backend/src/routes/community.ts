@@ -1,5 +1,5 @@
 import express from 'express';
-import { authenticate } from '../middleware/auth';
+import { authenticate, optionalAuthenticate } from '../middleware/auth';
 import {
   // Forum
   getForumCategories,
@@ -62,8 +62,8 @@ router.get('/forum/posts/:postId/subscribed', authenticate, (req, res, next) => 
 
 // ==================== USER GROUPS ROUTES ====================
 
-// Public user group routes
-router.get('/groups', getUserGroups);
+// Public user group routes (with optional auth for membership info)
+router.get('/groups', optionalAuthenticate, getUserGroups);
 router.get('/groups/:slug', getUserGroupBySlug);
 router.get('/groups/:slug/posts', getGroupPosts);
 router.get('/groups/:slug/posts/:postId', getGroupPost);

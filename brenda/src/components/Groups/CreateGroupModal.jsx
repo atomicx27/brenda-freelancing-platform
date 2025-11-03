@@ -5,6 +5,7 @@ const CreateGroupModal = ({ open, onClose, onCreate }) => {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [privacy, setPrivacy] = useState('public');
+  const [requiresApproval, setRequiresApproval] = useState(false);
   const [loading, setLoading] = useState(false);
 
   if (!open) return null;
@@ -13,10 +14,20 @@ const CreateGroupModal = ({ open, onClose, onCreate }) => {
     e.preventDefault();
     setLoading(true);
     try {
-      await onCreate({ name, description, privacy });
+      const isPublic = privacy === 'public';
+      await onCreate({ 
+        name, 
+        description, 
+        isPublic,
+        requiresApproval: !isPublic && requiresApproval,
+        category: 'GENERAL',
+        rules: '',
+        tags: []
+      });
       setName('');
       setDescription('');
       setPrivacy('public');
+      setRequiresApproval(false);
       onClose();
     } catch (err) {
       console.error('Create group failed', err);
@@ -65,11 +76,26 @@ const CreateGroupModal = ({ open, onClose, onCreate }) => {
               className="mt-1 block w-full border border-gray-200 rounded-md p-2"
             >
               <option value="public">Public</option>
-              <option value="private">Private (by request)</option>
+              <option value="private">Private</option>
             </select>
           </div>
 
-          <div className="flex justify-end space-x-2">
+          {privacy === 'private' && (
+            <div className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                id="requiresApproval"
+                checked={requiresApproval}
+                onChange={(e) => setRequiresApproval(e.target.checked)}
+                className="w-4 h-4 text-green-600 border-gray-300 rounded"
+              />
+              <label htmlFor="requiresApproval" className="text-sm text-gray-700">
+                Require approval to join (members must be approved by moderators)
+              </label>
+            </div>
+          )}
+
+          <div className="flex justify-end space-x-2">`
             <button type="button" onClick={onClose} className="px-4 py-2 rounded-md border">Cancel</button>
             <button type="submit" disabled={loading} className="px-4 py-2 bg-green-600 text-white rounded-md">
               {loading ? 'Creating...' : 'Create Group'}

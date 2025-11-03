@@ -77,6 +77,56 @@ export const authorize = (...roles: string[]) => {
   };
 };
 
+// Optional authentication - doesn't fail if no token provided
+export const optionalAuthenticate = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    let token: string | undefined;
+
+    // Get token from header
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+      token = req.headers.authorization.split(' ')[1];
+    }
+
+    // If no token, just continue without user
+    if (!token) {
+      return next();
+    }
+
+    // Verify token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as JWTPayload;
+
+    // Get user from database
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        userType: true,
+        isVerified: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true
+      }
+    });
+
+    if (user && user.isActive) {
+      // Add user to request object only if valid
+      req.user = user as any;
+    }
+    
+    next();
+  } catch (error) {
+    // If token is invalid, just continue without user (don't fail)
+    next();
+  }
+};
+
 // Middleware to check if user is verified
 export const requireVerification = (
   req: AuthenticatedRequest,

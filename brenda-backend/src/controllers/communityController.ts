@@ -384,14 +384,18 @@ export const getUserGroups = async (req: AuthenticatedRequest, res: Response, ne
       limit = 20, 
       category, 
       search,
-      isPublic = 'true'
+      isPublic
     } = req.query;
 
     const skip = (Number(page) - 1) * Number(limit);
     const where: any = { 
-      isActive: true,
-      isPublic: isPublic === 'true'
+      isActive: true
     };
+
+    // Only filter by isPublic if explicitly provided
+    if (isPublic !== undefined) {
+      where.isPublic = isPublic === 'true';
+    }
 
     if (category) {
       where.category = category;
@@ -418,6 +422,7 @@ export const getUserGroups = async (req: AuthenticatedRequest, res: Response, ne
 
     if (currentUserId) {
       includeObj.members = { where: { userId: currentUserId }, select: { userId: true, role: true } };
+      includeObj.joinRequests = { where: { userId: currentUserId, status: 'PENDING' }, select: { id: true, status: true } };
     }
 
     const [groups, total] = await withRetry(async () => {
@@ -437,15 +442,16 @@ export const getUserGroups = async (req: AuthenticatedRequest, res: Response, ne
     const groupsWithMembership = (groups as any[]).map((g: any) => {
       const isMember = !!(currentUserId && Array.isArray(g.members) && g.members.length > 0);
       const role = isMember ? g.members[0].role : null;
-      // remove the small members array (may be empty) to keep payload clean
-      const { members, ...rest } = g;
-      return { ...rest, isMember, role };
+      const hasPendingRequest = !!(currentUserId && Array.isArray(g.joinRequests) && g.joinRequests.length > 0);
+      // remove the small members/joinRequests arrays (may be empty) to keep payload clean
+      const { members, joinRequests, ...rest } = g;
+      return { ...rest, isMember, role, hasPendingRequest };
     });
 
     res.status(200).json({
       status: 'success',
       data: {
-        groups,
+        groups: groupsWithMembership,
         pagination: {
           total,
           page: Number(page),
@@ -467,6 +473,7 @@ export const createUserGroup = async (req: AuthenticatedRequest, res: Response, 
       description, 
       category, 
       isPublic = true, 
+      requiresApproval = false,
       rules, 
       tags = [] 
     } = req.body;
@@ -482,6 +489,7 @@ export const createUserGroup = async (req: AuthenticatedRequest, res: Response, 
           slug,
           category,
           isPublic,
+          requiresApproval,
           rules,
           tags,
           createdBy
