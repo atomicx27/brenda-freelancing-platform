@@ -13,6 +13,12 @@ const GroupCard = ({ group, onJoined }) => {
       setJoined(true);
       if (onJoined) onJoined(group.id);
     } catch (err) {
+      // If backend says user is already a member, mark as joined to keep UI consistent
+      const message = err?.message || (err?.response && err.response.message) || '';
+      if (typeof message === 'string' && message.toLowerCase().includes('already a member')) {
+        setJoined(true);
+        if (onJoined) onJoined(group.id);
+      }
       console.error('Join group failed', err);
     } finally {
       setJoining(false);

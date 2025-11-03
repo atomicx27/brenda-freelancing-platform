@@ -377,7 +377,7 @@ export const checkSubscription = async (req: AuthenticatedRequest, res: Response
 // ==================== USER GROUPS ====================
 
 // Get user groups
-export const getUserGroups = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const getUserGroups = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { 
       page = 1, 
@@ -404,6 +404,22 @@ export const getUserGroups = async (req: Request, res: Response, next: NextFunct
       ];
     }
 
+    // If the request is authenticated, include a filtered `members` relation for the current user
+    const currentUserId = req.user?.id;
+
+    const includeObj: any = {
+      _count: {
+        select: {
+          members: true,
+          posts: true
+        }
+      }
+    };
+
+    if (currentUserId) {
+      includeObj.members = { where: { userId: currentUserId }, select: { userId: true, role: true } };
+    }
+
     const [groups, total] = await withRetry(async () => {
       return Promise.all([
         prisma.userGroup.findMany({
@@ -411,17 +427,19 @@ export const getUserGroups = async (req: Request, res: Response, next: NextFunct
           skip,
           take: Number(limit),
           orderBy: { createdAt: 'desc' },
-          include: {
-            _count: {
-              select: {
-                members: true,
-                posts: true
-              }
-            }
-          }
+          include: includeObj
         }),
         prisma.userGroup.count({ where })
       ]);
+    });
+
+    // Map groups to attach simple membership flags for frontend consumption
+    const groupsWithMembership = (groups as any[]).map((g: any) => {
+      const isMember = !!(currentUserId && Array.isArray(g.members) && g.members.length > 0);
+      const role = isMember ? g.members[0].role : null;
+      // remove the small members array (may be empty) to keep payload clean
+      const { members, ...rest } = g;
+      return { ...rest, isMember, role };
     });
 
     res.status(200).json({
