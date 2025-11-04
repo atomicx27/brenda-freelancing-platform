@@ -5,6 +5,7 @@ import apiService from '../services/api';
 import UserManagement from '../components/UserManagement';
 import ContentModeration from '../components/ContentModeration';
 import SystemMonitoring from '../components/SystemMonitoring';
+import MentorApplicationManagement from '../components/MentorApplicationManagement';
 import { 
   FaUsers, 
   FaBriefcase, 
@@ -25,7 +26,8 @@ import {
   FaCheck,
   FaDownload,
   FaServer,
-  FaClock
+  FaClock,
+  FaGraduationCap
 } from 'react-icons/fa';
 
 const AdminDashboard = () => {
@@ -194,6 +196,7 @@ const AdminDashboard = () => {
             {[
               { id: 'overview', label: 'Overview', icon: FaChartLine },
               { id: 'users', label: 'User Management', icon: FaUsers },
+              { id: 'mentors', label: 'Mentor Applications', icon: FaGraduationCap },
               { id: 'moderation', label: 'Content Moderation', icon: FaShieldAlt },
               { id: 'system', label: 'System Monitoring', icon: FaCog }
             ].map((tab) => (
@@ -320,6 +323,8 @@ const AdminDashboard = () => {
         )}
 
         {activeTab === 'users' && <UserManagement />}
+
+        {activeTab === 'mentors' && <MentorApplicationManagement />}
 
         {activeTab === 'moderation' && <ContentModeration />}
 
