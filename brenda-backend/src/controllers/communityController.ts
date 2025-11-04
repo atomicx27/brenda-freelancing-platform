@@ -45,6 +45,156 @@ export const getForumCategories = async (req: Request, res: Response, next: Next
   }
 };
 
+// Get pending connection requests
+export const getPendingConnections = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const userId = req.user!.id;
+
+    const pendingConnections = await prisma.socialConnection.findMany({
+      where: {
+        connectedUserId: userId,
+        status: 'PENDING',
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            avatar: true,
+          },
+        },
+      },
+    });
+
+    res.status(200).json({
+      status: 'success',
+      data: { connections: pendingConnections },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Accept a connection request
+export const acceptConnectionRequest = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { requestId } = req.params;
+    const userId = req.user!.id;
+
+    const request = await prisma.socialConnection.findUnique({
+      where: { id: requestId },
+    });
+
+    if (!request) {
+      throw createError('Connection request not found', 404);
+    }
+
+    if (request.connectedUserId !== userId) {
+      throw createError(
+        'You are not authorized to accept this request',
+        403
+      );
+    }
+
+    const updatedConnection = await prisma.socialConnection.update({
+      where: { id: requestId },
+      data: { status: 'ACCEPTED' },
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Connection request accepted',
+      data: { connection: updatedConnection },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Reject a connection request
+export const rejectConnectionRequest = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { requestId } = req.params;
+    const userId = req.user!.id;
+
+    const request = await prisma.socialConnection.findUnique({
+      where: { id: requestId },
+    });
+
+    if (!request) {
+      throw createError('Connection request not found', 404);
+    }
+
+    if (request.connectedUserId !== userId) {
+      throw createError(
+        'You are not authorized to reject this request',
+        403
+      );
+    }
+
+    await prisma.socialConnection.delete({
+      where: { id: requestId },
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Connection request rejected',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Remove a connection
+export const removeConnection = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { userId: connectedUserId } = req.params;
+    const userId = req.user!.id;
+
+    const connection = await prisma.socialConnection.findFirst({
+      where: {
+        status: 'ACCEPTED',
+        OR: [
+          { userId: userId, connectedUserId: connectedUserId },
+          { userId: connectedUserId, connectedUserId: userId },
+        ],
+      },
+    });
+
+    if (!connection) {
+      throw createError('Connection not found', 404);
+    }
+
+    await prisma.socialConnection.delete({
+      where: { id: connection.id },
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Connection removed',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // Get forum posts
 export const getForumPosts = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {

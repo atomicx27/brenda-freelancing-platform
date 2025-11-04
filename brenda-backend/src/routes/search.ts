@@ -5,7 +5,8 @@ import {
   advancedFreelancerSearch,
   getSearchFilters,
   saveSearchPreferences,
-  getSearchPreferences
+  getSearchPreferences,
+  searchUsers,
 } from '../controllers/searchController';
 
 const router = express.Router();
@@ -13,6 +14,7 @@ const router = express.Router();
 // Public search routes
 router.get('/jobs', advancedJobSearch);
 router.get('/freelancers', advancedFreelancerSearch);
+router.get('/users', searchUsers);
 router.get('/filters', getSearchFilters);
 
 // Authenticated routes for saving preferences

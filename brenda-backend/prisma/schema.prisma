@@ -63,6 +63,8 @@ model User {
   socialConnections          SocialConnection[] @relation("UserSocialConnection")
   userGroups                 UserGroupMember[]
   bannedFromGroups           GroupBannedUser[]
+  blockedUsers               BlockedUser[]      @relation("BlockedBy")
+  blockedBy                  BlockedUser[]      @relation("Blocking")
   profile                    UserProfile?
 
   @@map("users")
@@ -634,6 +636,19 @@ model SocialConnection {
 
   @@unique([userId, connectedUserId])
   @@map("social_connections")
+}
+
+model BlockedUser {
+  id        String   @id @default(cuid())
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+
+  blocker   User     @relation("BlockedBy", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked   User     @relation("Blocking", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@map("blocked_users")
 }
 
 model ContentLike {

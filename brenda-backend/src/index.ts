@@ -35,7 +35,7 @@ import { notFound } from './middleware/notFound';
 
 // Environment variables already loaded at the top
 
-const app = express();
+export const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Security middleware
@@ -165,18 +165,21 @@ app.use(notFound);
 // Error handling middleware
 app.use(errorHandler);
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🌐 Health check: http://localhost:${PORT}/health`);
-  // Start background schedulers (scheduled rules, email campaigns)
-  try {
-    startSchedulers();
-    console.log('⏱️  Schedulers started');
-  } catch (e) {
-    console.warn('Failed to start schedulers:', (e as any)?.message || e);
-  }
-});
+// Start server only if running directly
+let server: any;
+if (require.main === module) {
+  server = app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`🌐 Health check: http://localhost:${PORT}/health`);
+    // Start background schedulers (scheduled rules, email campaigns)
+    try {
+      startSchedulers();
+      console.log('⏱️  Schedulers started');
+    } catch (e) {
+      console.warn('Failed to start schedulers:', (e as any)?.message || e);
+    }
+  });
+}
 
-export default app;
+export { server };

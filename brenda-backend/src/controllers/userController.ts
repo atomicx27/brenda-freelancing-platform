@@ -68,6 +68,142 @@ export const getUserProfile = async (req: AuthenticatedRequest, res: Response, n
   }
 };
 
+// Block a user
+export const blockUser = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { userId: blockedUserId } = req.params;
+    const userId = req.user!.id;
+
+    if (userId === blockedUserId) {
+      throw createError('You cannot block yourself', 400);
+    }
+
+    const existingBlock = await prisma.blockedUser.findUnique({
+      where: {
+        blockerId_blockedId: {
+          blockerId: userId,
+          blockedId: blockedUserId,
+        },
+      },
+    });
+
+    if (existingBlock) {
+      throw createError('User is already blocked', 400);
+    }
+
+    await prisma.blockedUser.create({
+      data: {
+        blockerId: userId,
+        blockedId: blockedUserId,
+      },
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'User blocked successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Unblock a user
+export const unblockUser = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { userId: blockedUserId } = req.params;
+    const userId = req.user!.id;
+
+    const existingBlock = await prisma.blockedUser.findUnique({
+      where: {
+        blockerId_blockedId: {
+          blockerId: userId,
+          blockedId: blockedUserId,
+        },
+      },
+    });
+
+    if (!existingBlock) {
+      throw createError('User is not blocked', 400);
+    }
+
+    await prisma.blockedUser.delete({
+      where: {
+        id: existingBlock.id,
+      },
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'User unblocked successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Get a user's public profile
+export const getUserPublicProfile = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { userId } = req.params;
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        avatar: true,
+        bio: true,
+        location: true,
+        website: true,
+        linkedin: true,
+        github: true,
+        twitter: true,
+        profile: {
+          select: {
+            title: true,
+            company: true,
+            experience: true,
+            skills: true,
+            languages: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      const response: ApiResponse = {
+        success: false,
+        message: 'User not found',
+      };
+      res.status(404).json(response);
+      return;
+    }
+
+    const response: ApiResponse = {
+      success: true,
+      message: "User's public profile retrieved successfully",
+      data: user,
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    next(error);
+  }
+};
+
 // Update user profile
 export const updateUserProfile = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
   try {

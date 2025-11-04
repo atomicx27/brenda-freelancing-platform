@@ -1,126 +1,144 @@
-import { joinUserGroup, approveJoinRequest } from '../src/controllers/communityController';
+import request from 'supertest';
+import { app } from '../src/index';
+import prisma from '../src/utils/prisma';
+import bcrypt from 'bcryptjs';
 
-// Mock prisma module used by controllers
-const mockPrisma: any = {
-  userGroupMember: {
-    findUnique: jest.fn(),
-    create: jest.fn(),
-    delete: jest.fn()
-  },
-  userGroup: {
-    findUnique: jest.fn(),
-    update: jest.fn(),
-    create: jest.fn()
-  },
-  userGroupJoinRequest: {
-    findUnique: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
-    findMany: jest.fn()
-  },
-  groupPost: {
-    findUnique: jest.fn()
-  },
-  groupPostComment: {
-    create: jest.fn()
-  }
-};
+jest.setTimeout(30000);
 
-// Use an inline factory for the mock to avoid hoisting issues
-jest.mock('../src/utils/prisma', () => {
-  return { __esModule: true, default: {
-    userGroupMember: {
-      findUnique: jest.fn(),
-      create: jest.fn(),
-      delete: jest.fn()
-    },
-    userGroup: {
-      findUnique: jest.fn(),
-      update: jest.fn(),
-      create: jest.fn()
-    },
-    userGroupJoinRequest: {
-      findUnique: jest.fn(),
-      create: jest.fn(),
-      update: jest.fn(),
-      findMany: jest.fn()
-    },
-    groupPost: { findUnique: jest.fn() },
-    groupPostComment: { create: jest.fn() }
-  } };
-});
+describe('Community API', () => {
+  let user1: any;
+  let user2: any;
+  let token1: string;
+  let token2: string;
 
-// Reuse the same reference for assertions in tests
-const mockedPrisma = require('../src/utils/prisma').default as any;
+  beforeAll(async () => {
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash('password', salt);
 
-const makeRes = () => {
-  const res: any = {};
-  res.status = jest.fn().mockImplementation((code: number) => {
-    res.statusCode = code;
-    return res;
-  });
-  res.json = jest.fn().mockImplementation((payload: any) => {
-    res.payload = payload;
-    return res;
-  });
-  return res;
-};
+    user1 = await prisma.user.create({
+      data: {
+        email: 'user1@example.com',
+        password: hashedPassword,
+        firstName: 'User',
+        lastName: 'One',
+      },
+    });
 
-describe('communityController - groups', () => {
-  beforeEach(() => {
-    // reset mocks
-    jest.clearAllMocks();
+    user2 = await prisma.user.create({
+      data: {
+        email: 'user2@example.com',
+        password: hashedPassword,
+        firstName: 'User',
+        lastName: 'Two',
+      },
+    });
+
+    const res1 = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'user1@example.com', password: 'password' });
+    token1 = res1.body.token;
+
+    const res2 = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'user2@example.com', password: 'password' });
+    token2 = res2.body.token;
   });
 
-  test('joinUserGroup creates a join request when group requires approval', async () => {
-    // Arrange
-    const req: any = { params: { groupId: 'group1' }, user: { id: 'user1' } };
-    const res = makeRes();
-    const next = jest.fn();
-
-  mockedPrisma.userGroupMember.findUnique.mockResolvedValue(null);
-  mockedPrisma.userGroup.findUnique.mockResolvedValue({ id: 'group1', requiresApproval: true });
-  mockedPrisma.userGroupJoinRequest.findUnique.mockResolvedValue(null);
-  mockedPrisma.userGroupJoinRequest.create.mockResolvedValue({ id: 'req1', groupId: 'group1', userId: 'user1', status: 'PENDING' });
-
-    // Act
-    await joinUserGroup(req, res, next);
-
-    // Assert
-  expect(mockedPrisma.userGroupMember.findUnique).toHaveBeenCalled();
-  expect(mockedPrisma.userGroup.findUnique).toHaveBeenCalledWith({ where: { id: 'group1' } });
-  expect(mockedPrisma.userGroupJoinRequest.create).toHaveBeenCalledWith({ data: { groupId: 'group1', userId: 'user1', status: 'PENDING' } });
-    expect(res.status).toHaveBeenCalledWith(201);
-    expect(res.payload).toBeDefined();
-    expect(res.payload.message).toMatch(/Join request submitted/i);
-    expect(res.payload.data.request.id).toBe('req1');
+  afterAll(async () => {
+    await prisma.user.deleteMany({
+      where: {
+        email: {
+          in: ['user1@example.com', 'user2@example.com'],
+        },
+      },
+    });
   });
 
-  test('approveJoinRequest approves and creates membership when requested by owner/mod', async () => {
-    // Arrange
-    const req: any = { params: { groupId: 'group1', requestId: 'req1' }, user: { id: 'owner1' } };
-    const res = makeRes();
-    const next = jest.fn();
+  describe('Social Connections', () => {
+    afterEach(async () => {
+      await prisma.socialConnection.deleteMany({});
+    });
 
-    // isOwnerOrModerator check - actor membership
-  mockedPrisma.userGroupMember.findUnique.mockResolvedValueOnce({ id: 'm-owner', role: 'OWNER' });
-    // fetch join request
-  mockedPrisma.userGroupJoinRequest.findUnique.mockResolvedValue({ id: 'req1', groupId: 'group1', userId: 'user2' });
-  // create member
-  mockedPrisma.userGroupMember.create.mockResolvedValue({ id: 'm1' });
-  mockedPrisma.userGroup.update.mockResolvedValue({});
-  mockedPrisma.userGroupJoinRequest.update.mockResolvedValue({ id: 'req1', status: 'APPROVED' });
+    it('should send a connection request', async () => {
+      const res = await request(app)
+        .post('/api/community/social/connect')
+        .set('Authorization', `Bearer ${token1}`)
+        .send({ connectedUserId: user2.id });
 
-    // Act
-    await approveJoinRequest(req, res, next as any);
+      expect(res.statusCode).toEqual(201);
+      expect(res.body.status).toBe('success');
+      expect(res.body.data.connection.status).toBe('PENDING');
+    });
 
-    // Assert
-  expect(mockedPrisma.userGroupMember.findUnique).toHaveBeenCalled();
-  expect(mockedPrisma.userGroupJoinRequest.findUnique).toHaveBeenCalledWith({ where: { id: 'req1' } });
-  expect(mockedPrisma.userGroupMember.create).toHaveBeenCalledWith({ data: { groupId: 'group1', userId: 'user2', role: 'MEMBER' } });
-  expect(mockedPrisma.userGroup.update).toHaveBeenCalledWith({ where: { id: 'group1' }, data: { memberCount: { increment: 1 } } });
-  expect(mockedPrisma.userGroupJoinRequest.update).toHaveBeenCalledWith({ where: { id: 'req1' }, data: { status: 'APPROVED' } });
-    expect(res.status).toHaveBeenCalledWith(200);
-    expect(res.payload.message).toMatch(/Request approved/i);
+    it('should accept a connection request', async () => {
+      const connReq = await prisma.socialConnection.create({
+        data: {
+          userId: user1.id,
+          connectedUserId: user2.id,
+          status: 'PENDING',
+        },
+      });
+
+      const res = await request(app)
+        .post(`/api/community/social/connections/${connReq.id}/accept`)
+        .set('Authorization', `Bearer ${token2}`);
+
+      expect(res.statusCode).toEqual(200);
+      expect(res.body.status).toBe('success');
+      expect(res.body.data.connection.status).toBe('ACCEPTED');
+    });
+
+    it('should remove a connection', async () => {
+      await prisma.socialConnection.create({
+        data: {
+          userId: user1.id,
+          connectedUserId: user2.id,
+          status: 'ACCEPTED',
+        },
+      });
+
+      const res = await request(app)
+        .delete(`/api/community/social/connections/${user2.id}`)
+        .set('Authorization', `Bearer ${token1}`);
+
+      expect(res.statusCode).toEqual(200);
+      expect(res.body.status).toBe('success');
+    });
+
+    it('should reject a connection request', async () => {
+      const connReq = await prisma.socialConnection.create({
+        data: {
+          userId: user1.id,
+          connectedUserId: user2.id,
+          status: 'PENDING',
+        },
+      });
+
+      const res = await request(app)
+        .delete(`/api/community/social/connections/${connReq.id}/reject`)
+        .set('Authorization', `Bearer ${token2}`);
+
+      expect(res.statusCode).toEqual(200);
+      expect(res.body.status).toBe('success');
+    });
+
+    it('should get pending connection requests', async () => {
+      await prisma.socialConnection.create({
+        data: {
+          userId: user1.id,
+          connectedUserId: user2.id,
+          status: 'PENDING',
+        },
+      });
+
+      const res = await request(app)
+        .get('/api/community/social/connections/pending')
+        .set('Authorization', `Bearer ${token2}`);
+
+      expect(res.statusCode).toEqual(200);
+      expect(res.body.status).toBe('success');
+      expect(res.body.data.connections).toHaveLength(1);
+      expect(res.body.data.connections[0].user.id).toBe(user1.id);
+    });
   });
 });

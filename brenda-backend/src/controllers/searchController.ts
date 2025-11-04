@@ -177,6 +177,65 @@ export const advancedJobSearch = async (req: Request, res: Response, next: NextF
   }
 };
 
+// Search for users
+export const searchUsers = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { query, page = 1, limit = 20 } = req.query;
+    const skip = (Number(page) - 1) * Number(limit);
+
+    if (!query) {
+      throw createError('A search query is required', 400);
+    }
+
+    const where: any = {
+      OR: [
+        { firstName: { contains: query as string, mode: 'insensitive' } },
+        { lastName: { contains: query as string, mode: 'insensitive' } },
+        { email: { contains: query as string, mode: 'insensitive' } },
+      ],
+    };
+
+    const [users, total] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        skip,
+        take: Number(limit),
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          avatar: true,
+          profile: {
+            select: {
+              title: true,
+            },
+          },
+        },
+      }),
+      prisma.user.count({ where }),
+    ]);
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        users,
+        pagination: {
+          total,
+          page: Number(page),
+          limit: Number(limit),
+          pages: Math.ceil(total / Number(limit)),
+        },
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // Advanced freelancer search
 export const advancedFreelancerSearch = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {

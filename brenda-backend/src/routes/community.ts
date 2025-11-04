@@ -51,13 +51,15 @@ import {
   // Social Features
   likeContent,
   getUserConnections,
-  sendConnectionRequest
-  ,
+  sendConnectionRequest,
+  acceptConnectionRequest,
+  rejectConnectionRequest,
+  removeConnection,
+  getPendingConnections,
   subscribeToPost,
   unsubscribeFromPost,
-  getNotifications
-  ,
-  checkSubscription
+  getNotifications,
+  checkSubscription,
 } from '../controllers/communityController';
 
 const router = express.Router();
@@ -144,6 +146,16 @@ router.post('/events/:eventId/join', joinCommunityEvent);
 // Authenticated social routes
 router.post('/social/like', likeContent);
 router.get('/social/connections', getUserConnections);
+router.get('/social/connections/pending', getPendingConnections);
 router.post('/social/connect', sendConnectionRequest);
+router.post(
+  '/social/connections/:requestId/accept',
+  acceptConnectionRequest
+);
+router.delete(
+  '/social/connections/:requestId/reject',
+  rejectConnectionRequest
+);
+router.delete('/social/connections/:userId', removeConnection);
 
 export default router;
