@@ -128,6 +128,11 @@ class ApiService {
     });
   }
 
+  async getPotentialMentors(params = {}) {
+    const queryString = new URLSearchParams(params).toString();
+    return this.request(`/users/mentors${queryString ? `?${queryString}` : ''}`);
+  }
+
   // Portfolio APIs
   async getPortfolio() {
     return this.request('/portfolio');
@@ -578,6 +583,12 @@ class ApiService {
     });
   }
 
+  async deleteForumPost(postId) {
+    return this.request(`/community/forum/posts/${postId}`, {
+      method: 'DELETE'
+    });
+  }
+
   async subscribeToPost(postId) {
     return this.request(`/community/forum/posts/${postId}/subscribe`, {
       method: 'POST'
@@ -653,6 +664,10 @@ class ApiService {
     return this.request(`/community/groups/${slug}/membership`);
   }
 
+  async getGroupMembers(slug) {
+    return this.request(`/community/groups/${slug}/members`);
+  }
+
   // Join requests & moderation
   async getGroupJoinRequests(groupId) {
     return this.request(`/community/groups/${groupId}/requests`);
@@ -682,6 +697,26 @@ class ApiService {
     return this.request(`/community/groups/${groupId}/members/${userId}`, { method: 'DELETE' });
   }
 
+  // Group management (owner only)
+  async deleteUserGroup(slug) {
+    return this.request(`/community/groups/${slug}`, { method: 'DELETE' });
+  }
+
+  async banUserFromGroup(slug, userId, reason = null) {
+    return this.request(`/community/groups/${slug}/ban/${userId}`, {
+      method: 'POST',
+      body: JSON.stringify({ reason })
+    });
+  }
+
+  async unbanUserFromGroup(slug, userId) {
+    return this.request(`/community/groups/${slug}/ban/${userId}`, { method: 'DELETE' });
+  }
+
+  async getGroupBannedUsers(slug) {
+    return this.request(`/community/groups/${slug}/banned-users`);
+  }
+
   // Mentorship APIs
   async getMentorships(params = {}) {
     const queryString = new URLSearchParams(params).toString();
@@ -692,6 +727,60 @@ class ApiService {
     return this.request('/community/mentorships', {
       method: 'POST',
       body: JSON.stringify(data),
+    });
+  }
+
+  async acceptMentorshipRequest(id) {
+    return this.request(`/community/mentorships/${id}/accept`, {
+      method: 'POST',
+    });
+  }
+
+  async rejectMentorshipRequest(id) {
+    return this.request(`/community/mentorships/${id}/reject`, {
+      method: 'POST',
+    });
+  }
+
+  async endMentorship(id, data = {}) {
+    return this.request(`/community/mentorships/${id}/end`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Mentor Application APIs
+  async submitMentorApplication(data) {
+    return this.request('/mentor-applications/apply', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getMyMentorApplication() {
+    return this.request('/mentor-applications/my-application');
+  }
+
+  async getAllMentorApplications(params = {}) {
+    const queryString = new URLSearchParams(params).toString();
+    return this.request(`/mentor-applications${queryString ? `?${queryString}` : ''}`);
+  }
+
+  async getMentorApplicationDetails(id) {
+    return this.request(`/mentor-applications/${id}`);
+  }
+
+  async approveMentorApplication(id, adminNotes = '') {
+    return this.request(`/mentor-applications/${id}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ adminNotes }),
+    });
+  }
+
+  async rejectMentorApplication(id, adminNotes) {
+    return this.request(`/mentor-applications/${id}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ adminNotes }),
     });
   }
 

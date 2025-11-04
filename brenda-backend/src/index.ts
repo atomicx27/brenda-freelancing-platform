@@ -26,6 +26,7 @@ import automationRoutes from './routes/automation';
 import emailRoutes from './routes/email';
 import monitoringRoutes from './routes/monitoring';
 import aiRoutes from './routes/ai';
+import mentorApplicationRoutes from './routes/mentorApplications';
 import { startSchedulers } from './services/scheduler';
 
 // Import middleware
@@ -156,6 +157,7 @@ app.use('/api/automation', automationRoutes);
 app.use('/api/email', emailRoutes);
 app.use('/api/monitoring', monitoringRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/mentor-applications', mentorApplicationRoutes);
 
 // 404 handler
 app.use(notFound);

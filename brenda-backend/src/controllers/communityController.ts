@@ -318,6 +318,33 @@ export const createForumComment = async (req: AuthenticatedRequest, res: Respons
   }
 };
 
+// Delete forum post (owner only)
+export const deleteForumPost = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { postId } = req.params;
+    const userId = req.user!.id;
+
+    // Get the post
+    const post = await withRetry(() => prisma.forumPost.findUnique({ where: { id: postId } }));
+    if (!post) throw createError('Forum post not found', 404);
+
+    // Check if user is the owner
+    if (post.authorId !== userId) {
+      throw createError('Only the post owner can delete this post', 403);
+    }
+
+    // Delete the post (cascade will handle comments)
+    await withRetry(() => prisma.forumPost.delete({ where: { id: postId } }));
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Forum post deleted successfully'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // Subscribe to a forum post
 export const subscribeToPost = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -523,6 +550,17 @@ export const joinUserGroup = async (req: AuthenticatedRequest, res: Response, ne
   try {
     const { groupId } = req.params;
     const userId = req.user!.id;
+
+    // Check if user is banned from this group
+    const isBanned = await withRetry(() =>
+      prisma.groupBannedUser.findUnique({
+        where: { groupId_userId: { groupId, userId } }
+      })
+    );
+
+    if (isBanned) {
+      throw createError('You are banned from this group', 403);
+    }
 
     // Check if already a member
     const existingMember = await withRetry(() =>
@@ -935,6 +973,232 @@ export const checkGroupMembership = async (req: AuthenticatedRequest, res: Respo
   }
 };
 
+// Get all members of a group (owner/moderator only)
+export const getGroupMembers = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { slug } = req.params;
+    const userId = req.user!.id;
+
+    // Get the group
+    const group = await withRetry(() => prisma.userGroup.findUnique({ where: { slug } }));
+    if (!group) throw createError('Group not found', 404);
+
+    // Check if user is owner or moderator
+    const allowed = await isOwnerOrModerator(userId, group.id);
+    if (!allowed) throw createError('Unauthorized', 403);
+
+    // Get all members with user details
+    const members = await withRetry(() =>
+      prisma.userGroupMember.findMany({
+        where: { groupId: group.id },
+        include: {
+          user: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              avatar: true,
+              email: true
+            }
+          }
+        },
+        orderBy: [
+          { role: 'asc' }, // OWNER first, then MODERATOR, then MEMBER
+          { joinedAt: 'asc' }
+        ]
+      })
+    );
+
+    res.status(200).json({
+      status: 'success',
+      data: { members }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Delete a group (owner only)
+export const deleteUserGroup = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { slug } = req.params;
+    const userId = req.user!.id;
+
+    // Get the group
+    const group = await withRetry(() => prisma.userGroup.findUnique({ where: { slug } }));
+    if (!group) throw createError('Group not found', 404);
+
+    // Check if user is the owner
+    if (group.createdBy !== userId) {
+      throw createError('Only the group owner can delete the group', 403);
+    }
+
+    // Delete the group (cascade will handle members, posts, comments, etc.)
+    await withRetry(() => prisma.userGroup.delete({ where: { id: group.id } }));
+
+    res.status(200).json({ 
+      status: 'success', 
+      message: 'Group deleted successfully' 
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Ban a user from a group (owner only)
+export const banUserFromGroup = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { slug, userId: targetUserId } = req.params;
+    const { reason } = req.body;
+    const actorId = req.user!.id;
+
+    // Get the group
+    const group = await withRetry(() => prisma.userGroup.findUnique({ where: { slug } }));
+    if (!group) throw createError('Group not found', 404);
+
+    // Check if user is the owner
+    if (group.createdBy !== actorId) {
+      throw createError('Only the group owner can ban users', 403);
+    }
+
+    // Cannot ban yourself
+    if (targetUserId === actorId) {
+      throw createError('You cannot ban yourself', 400);
+    }
+
+    // Check if user is already banned
+    const existingBan = await withRetry(() =>
+      prisma.groupBannedUser.findUnique({
+        where: { groupId_userId: { groupId: group.id, userId: targetUserId } }
+      })
+    );
+
+    if (existingBan) {
+      throw createError('User is already banned from this group', 400);
+    }
+
+    // Remove user from group if they are a member
+    const membership = await withRetry(() =>
+      prisma.userGroupMember.findUnique({
+        where: { groupId_userId: { groupId: group.id, userId: targetUserId } }
+      })
+    );
+
+    if (membership) {
+      await withRetry(() => prisma.userGroupMember.delete({ where: { id: membership.id } }));
+      await withRetry(() =>
+        prisma.userGroup.update({
+          where: { id: group.id },
+          data: { memberCount: { decrement: 1 } }
+        })
+      );
+    }
+
+    // Create ban record
+    await withRetry(() =>
+      prisma.groupBannedUser.create({
+        data: {
+          groupId: group.id,
+          userId: targetUserId,
+          bannedBy: actorId,
+          reason: reason || null
+        }
+      })
+    );
+
+    res.status(200).json({
+      status: 'success',
+      message: 'User banned from group successfully'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Unban a user from a group (owner only)
+export const unbanUserFromGroup = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { slug, userId: targetUserId } = req.params;
+    const actorId = req.user!.id;
+
+    // Get the group
+    const group = await withRetry(() => prisma.userGroup.findUnique({ where: { slug } }));
+    if (!group) throw createError('Group not found', 404);
+
+    // Check if user is the owner
+    if (group.createdBy !== actorId) {
+      throw createError('Only the group owner can unban users', 403);
+    }
+
+    // Check if user is banned
+    const ban = await withRetry(() =>
+      prisma.groupBannedUser.findUnique({
+        where: { groupId_userId: { groupId: group.id, userId: targetUserId } }
+      })
+    );
+
+    if (!ban) {
+      throw createError('User is not banned from this group', 404);
+    }
+
+    // Remove ban
+    await withRetry(() =>
+      prisma.groupBannedUser.delete({
+        where: { id: ban.id }
+      })
+    );
+
+    res.status(200).json({
+      status: 'success',
+      message: 'User unbanned successfully'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Get banned users list (owner only)
+export const getGroupBannedUsers = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { slug } = req.params;
+    const userId = req.user!.id;
+
+    // Get the group
+    const group = await withRetry(() => prisma.userGroup.findUnique({ where: { slug } }));
+    if (!group) throw createError('Group not found', 404);
+
+    // Check if user is the owner
+    if (group.createdBy !== userId) {
+      throw createError('Only the group owner can view banned users', 403);
+    }
+
+    // Get banned users
+    const bannedUsers = await withRetry(() =>
+      prisma.groupBannedUser.findMany({
+        where: { groupId: group.id },
+        include: {
+          user: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              avatar: true
+            }
+          }
+        },
+        orderBy: { bannedAt: 'desc' }
+      })
+    );
+
+    res.status(200).json({
+      status: 'success',
+      data: { bannedUsers }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // ==================== MENTORSHIP SYSTEM ====================
 
 // Get mentorships
@@ -945,14 +1209,24 @@ export const getMentorships = async (req: Request, res: Response, next: NextFunc
       limit = 20, 
       category, 
       skills,
-      status = 'ACTIVE'
+      status
     } = req.query;
 
+    const userId = (req as any).user?.id;
     const skip = (Number(page) - 1) * Number(limit);
     const where: any = { 
       isActive: true,
-      status: status as any
+      status: { not: 'CANCELLED' }, // Exclude cancelled mentorships
+      OR: [
+        { mentorId: userId },
+        { menteeId: userId }
+      ]
     };
+
+    // Only filter by specific status if provided
+    if (status) {
+      where.status = status as any;
+    }
 
     if (category) {
       where.category = category;
@@ -1027,6 +1301,20 @@ export const createMentorshipRequest = async (req: AuthenticatedRequest, res: Re
       throw createError('You cannot request mentorship from yourself', 400);
     }
 
+    // Validate that description exists (the "why I want you as mentor" letter)
+    if (!description || description.trim().length < 50) {
+      throw createError('Please provide a detailed message explaining why you want this mentor (minimum 50 characters)', 400);
+    }
+
+    // Verify the mentor has an approved application
+    const mentorApplication = await prisma.mentorApplication.findUnique({
+      where: { userId: mentorId }
+    });
+
+    if (!mentorApplication || mentorApplication.status !== 'APPROVED') {
+      throw createError('This user is not an approved mentor', 400);
+    }
+
     const mentorship = await withRetry(() =>
       prisma.mentorship.create({
         data: {
@@ -1063,6 +1351,185 @@ export const createMentorshipRequest = async (req: AuthenticatedRequest, res: Re
       status: 'success',
       message: 'Mentorship request sent successfully',
       data: { mentorship }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Accept mentorship request
+export const acceptMentorshipRequest = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const userId = req.user!.id;
+
+    // Check if mentorship exists and user is the mentor
+    const mentorship = await prisma.mentorship.findUnique({
+      where: { id },
+      include: {
+        mentor: { select: { id: true, firstName: true, lastName: true } },
+        mentee: { select: { id: true, firstName: true, lastName: true } }
+      }
+    });
+
+    if (!mentorship) {
+      throw createError('Mentorship not found', 404);
+    }
+
+    if (mentorship.mentorId !== userId) {
+      throw createError('Only the mentor can accept this request', 403);
+    }
+
+    if (mentorship.status !== 'PENDING') {
+      throw createError('Only pending requests can be accepted', 400);
+    }
+
+    // Update mentorship status to ACTIVE
+    const updatedMentorship = await withRetry(() =>
+      prisma.mentorship.update({
+        where: { id },
+        data: {
+          status: 'ACTIVE',
+          startDate: new Date()
+        },
+        include: {
+          mentor: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              avatar: true
+            }
+          },
+          mentee: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              avatar: true
+            }
+          }
+        }
+      })
+    );
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Mentorship request accepted',
+      data: { mentorship: updatedMentorship }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Reject mentorship request
+export const rejectMentorshipRequest = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const userId = req.user!.id;
+
+    // Check if mentorship exists and user is the mentor
+    const mentorship = await prisma.mentorship.findUnique({
+      where: { id },
+      include: {
+        mentor: { select: { id: true, firstName: true, lastName: true } },
+        mentee: { select: { id: true, firstName: true, lastName: true } }
+      }
+    });
+
+    if (!mentorship) {
+      throw createError('Mentorship not found', 404);
+    }
+
+    if (mentorship.mentorId !== userId) {
+      throw createError('Only the mentor can reject this request', 403);
+    }
+
+    if (mentorship.status !== 'PENDING') {
+      throw createError('Only pending requests can be rejected', 400);
+    }
+
+    // Delete the mentorship request (rejected requests are removed)
+    await withRetry(() =>
+      prisma.mentorship.delete({
+        where: { id }
+      })
+    );
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Mentorship request rejected and removed',
+      data: { 
+        mentorshipId: id,
+        mentee: mentorship.mentee,
+        mentor: mentorship.mentor
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// End mentorship
+export const endMentorship = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const userId = req.user!.id;
+    const { feedback, rating } = req.body;
+
+    // Check if mentorship exists and user is mentor or mentee
+    const mentorship = await prisma.mentorship.findUnique({
+      where: { id }
+    });
+
+    if (!mentorship) {
+      throw createError('Mentorship not found', 404);
+    }
+
+    if (mentorship.mentorId !== userId && mentorship.menteeId !== userId) {
+      throw createError('Only mentor or mentee can end this mentorship', 403);
+    }
+
+    if (mentorship.status !== 'ACTIVE') {
+      throw createError('Only active mentorships can be ended', 400);
+    }
+
+    // Update mentorship status to COMPLETED
+    const updatedMentorship = await withRetry(() =>
+      prisma.mentorship.update({
+        where: { id },
+        data: {
+          status: 'COMPLETED',
+          endDate: new Date(),
+          feedback: feedback || mentorship.feedback,
+          rating: rating || mentorship.rating
+        },
+        include: {
+          mentor: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              avatar: true
+            }
+          },
+          mentee: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              avatar: true
+            }
+          }
+        }
+      })
+    );
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Mentorship ended successfully',
+      data: { mentorship: updatedMentorship }
     });
   } catch (error) {
     next(error);

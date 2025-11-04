@@ -50,6 +50,7 @@ model User {
   leadScores                 LeadScore[]
   mentorshipAsMentee         Mentorship[]       @relation("MenteeMentorship")
   mentorshipAsMentor         Mentorship[]       @relation("MentorMentorship")
+  mentorApplication          MentorApplication?
   receivedMessages           Message[]          @relation("MessageReceiver")
   messages                   Message[]          @relation("MessageSender")
   portfolio                  PortfolioItem[]
@@ -61,6 +62,7 @@ model User {
   socialConnectionsReceived  SocialConnection[] @relation("ConnectedUserSocialConnection")
   socialConnections          SocialConnection[] @relation("UserSocialConnection")
   userGroups                 UserGroupMember[]
+  bannedFromGroups           GroupBannedUser[]
   profile                    UserProfile?
 
   @@map("users")
@@ -371,6 +373,7 @@ model UserGroup {
   posts       GroupPost[]
   members     UserGroupMember[]
   joinRequests UserGroupJoinRequest[]
+  bannedUsers  GroupBannedUser[]
 
   @@map("user_groups")
 }
@@ -443,6 +446,21 @@ model UserGroupJoinRequest {
   @@map("user_group_join_requests")
 }
 
+model GroupBannedUser {
+  id        String    @id @default(cuid())
+  groupId   String
+  userId    String
+  reason    String?
+  bannedBy  String
+  bannedAt  DateTime  @default(now())
+
+  group     UserGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@map("group_banned_users")
+}
+
 enum JoinRequestStatus {
   PENDING
   APPROVED
@@ -488,6 +506,27 @@ model MentorshipSession {
   mentorship   Mentorship    @relation(fields: [mentorshipId], references: [id], onDelete: Cascade)
 
   @@map("mentorship_sessions")
+}
+
+model MentorApplication {
+  id               String                    @id @default(cuid())
+  userId           String                    @unique
+  expertise        String[]                  // Areas of expertise
+  experience       Int                       // Years of experience
+  motivation       String                    // Why they want to be a mentor
+  availability     String                    // Available hours per week
+  linkedinUrl      String?
+  portfolioUrl     String?
+  achievements     String?                   // Notable achievements
+  status           MentorApplicationStatus   @default(PENDING)
+  adminNotes       String?                   // Admin review notes
+  reviewedBy       String?                   // Admin who reviewed
+  reviewedAt       DateTime?
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+  user             User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("mentor_applications")
 }
 
 model KnowledgeCategory {
@@ -902,6 +941,12 @@ enum MentorshipStatus {
   ACTIVE
   COMPLETED
   CANCELLED
+}
+
+enum MentorApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum SessionStatus {

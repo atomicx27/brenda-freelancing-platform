@@ -7,6 +7,7 @@ import {
   createForumPost,
   getForumPost,
   createForumComment,
+  deleteForumPost,
   
   // User Groups
   getUserGroups,
@@ -18,6 +19,7 @@ import {
   getGroupPost,
   createGroupPostComment,
   checkGroupMembership,
+  getGroupMembers,
   // join requests & moderation
   getGroupJoinRequests,
   approveJoinRequest,
@@ -25,10 +27,18 @@ import {
   togglePinGroupPost,
   deleteGroupPost,
   removeGroupMember,
+  // group management (owner only)
+  deleteUserGroup,
+  banUserFromGroup,
+  unbanUserFromGroup,
+  getGroupBannedUsers,
   
   // Mentorship
   getMentorships,
   createMentorshipRequest,
+  acceptMentorshipRequest,
+  rejectMentorshipRequest,
+  endMentorship,
   
   // Knowledge Base
   getKnowledgeArticles,
@@ -71,8 +81,8 @@ router.get('/groups/:groupId/requests', authenticate, getGroupJoinRequests);
 
 // ==================== MENTORSHIP ROUTES ====================
 
-// Public mentorship routes
-router.get('/mentorships', getMentorships);
+// Mentorship routes (require authentication)
+router.get('/mentorships', authenticate, getMentorships);
 
 // ==================== KNOWLEDGE BASE ROUTES ====================
 
@@ -93,6 +103,7 @@ router.use(authenticate);
 // Authenticated forum routes
 router.post('/forum/posts', createForumPost);
 router.post('/forum/posts/:postId/comments', createForumComment);
+router.delete('/forum/posts/:postId', deleteForumPost);
 router.get('/forum/posts/:postId/subscribed', checkSubscription);
 router.post('/forum/posts/:postId/subscribe', subscribeToPost);
 router.delete('/forum/posts/:postId/unsubscribe', unsubscribeFromPost);
@@ -106,14 +117,24 @@ router.post('/groups/:groupId/join', joinUserGroup);
 router.post('/groups/:slug/posts', createGroupPost);
 router.post('/groups/:slug/posts/:postId/comments', createGroupPostComment);
 router.get('/groups/:slug/membership', checkGroupMembership);
+router.get('/groups/:slug/members', getGroupMembers);
 router.post('/groups/:groupId/requests/:requestId/approve', approveJoinRequest);
 router.post('/groups/:groupId/requests/:requestId/reject', rejectJoinRequest);
 router.post('/groups/:slug/posts/:postId/pin', togglePinGroupPost);
 router.delete('/groups/:slug/posts/:postId', deleteGroupPost);
 router.delete('/groups/:groupId/members/:userId', removeGroupMember);
 
+// Group management (owner only)
+router.delete('/groups/:slug', deleteUserGroup);
+router.post('/groups/:slug/ban/:userId', banUserFromGroup);
+router.delete('/groups/:slug/ban/:userId', unbanUserFromGroup);
+router.get('/groups/:slug/banned-users', getGroupBannedUsers);
+
 // Authenticated mentorship routes
 router.post('/mentorships', createMentorshipRequest);
+router.post('/mentorships/:id/accept', acceptMentorshipRequest);
+router.post('/mentorships/:id/reject', rejectMentorshipRequest);
+router.post('/mentorships/:id/end', endMentorship);
 
 // Authenticated event routes
 router.post('/events/:eventId/join', joinCommunityEvent);

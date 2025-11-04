@@ -179,3 +179,69 @@ export const updateUserProfile = async (req: AuthenticatedRequest, res: Response
     next(error);
   }
 };
+
+// Get potential mentors
+export const getPotentialMentors = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { search, category, skills, limit = 20 } = req.query;
+    const currentUserId = req.user!.id;
+
+    const where: any = {
+      id: { not: currentUserId }, // Exclude current user
+      isActive: true,
+      // Only show users who have APPROVED mentor applications
+      mentorApplication: {
+        status: 'APPROVED'
+      }
+    };
+
+    // If search term provided, search by name or profile title
+    if (search) {
+      where.OR = [
+        { firstName: { contains: search as string, mode: 'insensitive' } },
+        { lastName: { contains: search as string, mode: 'insensitive' } },
+        { profile: { title: { contains: search as string, mode: 'insensitive' } } }
+      ];
+    }
+
+    const mentors = await prisma.user.findMany({
+      where,
+      take: Number(limit),
+      orderBy: [
+        { createdAt: 'desc' }
+      ],
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        avatar: true,
+        profile: {
+          select: {
+            title: true,
+            skills: true,
+            experience: true,
+            hourlyRate: true
+          }
+        },
+        mentorApplication: {
+          select: {
+            expertise: true,
+            experience: true,
+            achievements: true
+          }
+        }
+      }
+    });
+
+    const response: ApiResponse = {
+      success: true,
+      message: 'Mentors retrieved successfully',
+      data: { mentors }
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    next(error);
+  }
+};

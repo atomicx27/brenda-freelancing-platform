@@ -273,6 +273,21 @@ const Forum = () => {
     }
   };
 
+  const handleDeletePost = async (postId) => {
+    if (!window.confirm('Are you sure you want to delete this post? This action cannot be undone.')) {
+      return;
+    }
+    
+    try {
+      await apiService.deleteForumPost(postId);
+      setPosts(prevPosts => prevPosts.filter(post => post.id !== postId));
+      alert('Post deleted successfully');
+    } catch (error) {
+      console.error('Error deleting post:', error);
+      alert(error?.message || 'Failed to delete post. Please try again.');
+    }
+  };
+
   const formatDate = (dateString) => {
     return new Date(dateString).toLocaleDateString('en-US', {
       year: 'numeric',
@@ -300,9 +315,11 @@ const Forum = () => {
           <div className="flex items-center space-x-2 mb-2">
             {selectedPost.isPinned && <FaThumbtack className="text-yellow-500" />}
             {selectedPost.isLocked && <FaLock className="text-red-500" />}
-            <span className={`px-2 py-1 rounded-full text-xs font-medium`} style={{ backgroundColor: selectedPost.category.color + '20', color: selectedPost.category.color }}>
-              {selectedPost.category.name}
-            </span>
+            {selectedPost.category && (
+              <span className={`px-2 py-1 rounded-full text-xs font-medium`} style={{ backgroundColor: (selectedPost.category.color || '#3B82F6') + '20', color: selectedPost.category.color || '#3B82F6' }}>
+                {selectedPost.category.name}
+              </span>
+            )}
           </div>
           
           <h1 className="text-3xl font-bold text-gray-800 mb-4">{selectedPost.title}</h1>
@@ -310,7 +327,7 @@ const Forum = () => {
           <div className="flex items-center space-x-4 text-sm text-gray-500 mb-6">
             <div className="flex items-center space-x-2">
               <FaUser />
-              <span>{selectedPost.author.firstName} {selectedPost.author.lastName}</span>
+              <span>{selectedPost.author?.firstName || 'Unknown'} {selectedPost.author?.lastName || ''}</span>
             </div>
             <div className="flex items-center space-x-2">
               <FaClock />
@@ -353,7 +370,7 @@ const Forum = () => {
                 className="flex items-center space-x-2 text-gray-500 hover:text-red-500"
               >
                 <FaHeart />
-                <span>{selectedPost._count.likes}</span>
+                <span>{selectedPost._count?.likes || 0}</span>
               </button>
               <button className="flex items-center space-x-2 text-gray-500 hover:text-blue-500">
                 <FaShare />
@@ -366,7 +383,7 @@ const Forum = () => {
         {/* Comments Section */}
         <div className="bg-white rounded-lg shadow-md p-6">
           <h2 className="text-2xl font-bold text-gray-800 mb-6">
-            Comments ({selectedPost._count.comments})
+            Comments ({selectedPost._count?.comments || 0})
           </h2>
           
           {/* Add Comment */}
@@ -395,7 +412,7 @@ const Forum = () => {
                 <div className="flex items-center space-x-2 mb-2">
                   <FaUser className="text-gray-400" />
                   <span className="font-medium text-gray-800">
-                    {comment.author.firstName} {comment.author.lastName}
+                    {comment.author?.firstName || 'Unknown'} {comment.author?.lastName || ''}
                   </span>
                   <span className="text-sm text-gray-500">
                     {formatDate(comment.createdAt)}
@@ -615,9 +632,11 @@ const Forum = () => {
               <div className="flex items-center space-x-2 mb-3">
                 {post.isPinned && <FaThumbtack className="text-yellow-500" />}
                 {post.isLocked && <FaLock className="text-red-500" />}
-                <span className={`px-2 py-1 rounded-full text-xs font-medium`} style={{ backgroundColor: post.category.color + '20', color: post.category.color }}>
-                  {post.category.name}
-                </span>
+                {post.category && (
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium`} style={{ backgroundColor: (post.category.color || '#3B82F6') + '20', color: post.category.color || '#3B82F6' }}>
+                    {post.category.name}
+                  </span>
+                )}
               </div>
               
               <h2 className="text-xl font-semibold text-gray-800 mb-3 hover:text-blue-600">
@@ -630,7 +649,7 @@ const Forum = () => {
                 <div className="flex items-center space-x-4 text-sm text-gray-500">
                   <div className="flex items-center space-x-2">
                     <FaUser />
-                    <span>{post.author.firstName} {post.author.lastName}</span>
+                    <span>{post.author?.firstName || 'Unknown'} {post.author?.lastName || ''}</span>
                   </div>
                   <div className="flex items-center space-x-2">
                     <FaClock />
@@ -638,7 +657,7 @@ const Forum = () => {
                   </div>
                   <div className="flex items-center space-x-2">
                     <FaComments />
-                    <span>{post._count.comments}</span>
+                    <span>{post._count?.comments || 0}</span>
                   </div>
                 </div>
                 
@@ -651,7 +670,7 @@ const Forum = () => {
                     className="flex items-center space-x-1 text-gray-500 hover:text-red-500"
                   >
                     <FaHeart />
-                    <span>{post._count.likes}</span>
+                    <span>{post._count?.likes || 0}</span>
                   </button>
                   <button
                     onClick={(e) => e.stopPropagation()}
@@ -659,6 +678,18 @@ const Forum = () => {
                   >
                     <FaShare />
                   </button>
+                  {user && post.authorId === user.id && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeletePost(post.id);
+                      }}
+                      className="p-2 text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                      title="Delete post"
+                    >
+                      <FaTrash />
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
