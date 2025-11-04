@@ -323,8 +323,13 @@ export const updateUserStatus = async (req: AuthenticatedRequest, res: Response,
       case 'verify':
         updateData = {
           profile: {
-            update: {
-              isVerified: true
+            upsert: {
+              create: {
+                isVerified: true
+              },
+              update: {
+                isVerified: true
+              }
             }
           }
         };
@@ -333,8 +338,13 @@ export const updateUserStatus = async (req: AuthenticatedRequest, res: Response,
       case 'unverify':
         updateData = {
           profile: {
-            update: {
-              isVerified: false
+            upsert: {
+              create: {
+                isVerified: false
+              },
+              update: {
+                isVerified: false
+              }
             }
           }
         };

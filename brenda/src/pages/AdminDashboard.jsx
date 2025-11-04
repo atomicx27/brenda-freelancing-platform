@@ -278,7 +278,7 @@ const AdminDashboard = () => {
               <div className="bg-white rounded-lg shadow p-6">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">Recent Users</h3>
                 <div className="space-y-3">
-                  {dashboardData.recentActivity.users.slice(0, 5).map((user) => (
+                  {(Array.isArray(dashboardData?.recentActivity?.users) ? dashboardData.recentActivity.users : []).slice(0, 5).map((user) => (
                     <div key={user.id} className="flex items-center justify-between">
                       <div>
                         <p className="font-medium text-gray-900">
@@ -301,7 +301,7 @@ const AdminDashboard = () => {
               <div className="bg-white rounded-lg shadow p-6">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">Recent Jobs</h3>
                 <div className="space-y-3">
-                  {dashboardData.recentActivity.jobs.slice(0, 5).map((job) => (
+                  {(Array.isArray(dashboardData?.recentActivity?.jobs) ? dashboardData.recentActivity.jobs : []).slice(0, 5).map((job) => (
                     <div key={job.id} className="flex items-center justify-between">
                       <div>
                         <p className="font-medium text-gray-900">{job.title}</p>

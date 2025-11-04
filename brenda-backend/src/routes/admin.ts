@@ -17,6 +17,13 @@ import {
 
 const router = express.Router();
 
+// Debug middleware to log all admin route requests
+router.use((req, res, next) => {
+  console.log(`[ADMIN ROUTE] ${req.method} ${req.path}`);
+  console.log('[ADMIN ROUTE] Headers:', req.headers.authorization ? 'Token present' : 'No token');
+  next();
+});
+
 // All admin routes require authentication and admin role
 router.use(authenticate);
 router.use(requireAdmin);
@@ -26,8 +33,8 @@ router.get('/dashboard', getAdminDashboard);
 
 // User Management
 router.get('/users', getAllUsers);
+router.patch('/users/:userId/status', updateUserStatus); // More specific route first
 router.get('/users/:userId', getUserDetails);
-router.patch('/users/:userId/status', updateUserStatus);
 
 // Content Moderation
 router.get('/moderation/:type', getContentForModeration);
