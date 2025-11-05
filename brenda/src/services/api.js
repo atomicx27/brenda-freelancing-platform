@@ -859,6 +859,13 @@ class ApiService {
     });
   }
 
+  async updateSmartContract(contractId, data) {
+    return this.request(`/automation/contracts/${contractId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
   // Automated Invoicing APIs
   async getInvoices(params = {}) {
     const queryString = new URLSearchParams(params).toString();

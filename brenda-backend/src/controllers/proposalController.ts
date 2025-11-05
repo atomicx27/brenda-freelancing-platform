@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { body, validationResult } from 'express-validator';
 import { ApiResponse, AuthenticatedRequest } from '../types';
 import prisma from '../utils/prisma';
+import { autoGenerateContractOnProposalAcceptance } from '../services/automationService';
 
 // Validation rules for proposal creation
 export const createProposalValidation = [
@@ -521,6 +522,18 @@ export const updateProposalStatus = async (req: AuthenticatedRequest, res: Respo
         }
       }
     });
+
+    // 🤖 AUTOMATION TRIGGER: Auto-generate contract when proposal is accepted
+    if (status === 'ACCEPTED') {
+      try {
+        await autoGenerateContractOnProposalAcceptance(id);
+        console.log(`✅ [Automation] Contract auto-generated for accepted proposal ${id}`);
+      } catch (autoError: any) {
+        console.error(`⚠️ [Automation] Failed to auto-generate contract:`, autoError.message);
+        // Don't fail the proposal acceptance if contract generation fails
+        // The contract can be created manually later
+      }
+    }
 
     const response: ApiResponse = {
       success: true,

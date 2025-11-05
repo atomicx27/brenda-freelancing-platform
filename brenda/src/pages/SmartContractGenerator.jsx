@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 import apiService from '../services/api';
-import { FaFileContract, FaSave, FaArrowLeft } from 'react-icons/fa';
+import { FaFileContract, FaSave, FaArrowLeft, FaSearch, FaTimes } from 'react-icons/fa';
 
 const SmartContractGenerator = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState({
     title: '',
@@ -23,6 +25,98 @@ const SmartContractGenerator = () => {
   });
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  
+  // User search states
+  const [clientSearch, setClientSearch] = useState('');
+  const [freelancerSearch, setFreelancerSearch] = useState('');
+  const [allUsers, setAllUsers] = useState([]);
+  const [filteredClients, setFilteredClients] = useState([]);
+  const [filteredFreelancers, setFilteredFreelancers] = useState([]);
+  const [selectedClient, setSelectedClient] = useState(null);
+  const [selectedFreelancer, setSelectedFreelancer] = useState(null);
+  const [showClientDropdown, setShowClientDropdown] = useState(false);
+  const [showFreelancerDropdown, setShowFreelancerDropdown] = useState(false);
+
+  // Load users on mount
+  useEffect(() => {
+    loadUsers();
+    // Auto-fill freelancer if current user is a freelancer
+    if (user?.userType === 'FREELANCER') {
+      setSelectedFreelancer(user);
+      setForm(prev => ({ ...prev, freelancerId: user.id }));
+      setFreelancerSearch(`${user.firstName} ${user.lastName} (${user.email})`);
+    }
+  }, [user]);
+
+  const loadUsers = async () => {
+    try {
+      // Get all users using the existing getAllUsers method
+      const response = await apiService.getAllUsers();
+      setAllUsers(response.users || []);
+    } catch (err) {
+      console.error('Failed to load users:', err);
+      // Fallback: use empty array, user can still enter ID manually
+      setAllUsers([]);
+    }
+  };
+
+  // Filter clients when search changes
+  useEffect(() => {
+    if (clientSearch.length > 0) {
+      const filtered = allUsers.filter(u => 
+        u.userType === 'CLIENT' &&
+        (u.firstName?.toLowerCase().includes(clientSearch.toLowerCase()) ||
+         u.lastName?.toLowerCase().includes(clientSearch.toLowerCase()) ||
+         u.email?.toLowerCase().includes(clientSearch.toLowerCase()))
+      );
+      setFilteredClients(filtered);
+    } else {
+      setFilteredClients([]);
+    }
+  }, [clientSearch, allUsers]);
+
+  // Filter freelancers when search changes
+  useEffect(() => {
+    if (freelancerSearch.length > 0 && user?.userType !== 'FREELANCER') {
+      const filtered = allUsers.filter(u => 
+        u.userType === 'FREELANCER' &&
+        (u.firstName?.toLowerCase().includes(freelancerSearch.toLowerCase()) ||
+         u.lastName?.toLowerCase().includes(freelancerSearch.toLowerCase()) ||
+         u.email?.toLowerCase().includes(freelancerSearch.toLowerCase()))
+      );
+      setFilteredFreelancers(filtered);
+    } else {
+      setFilteredFreelancers([]);
+    }
+  }, [freelancerSearch, allUsers, user]);
+
+  const selectClient = (client) => {
+    setSelectedClient(client);
+    setForm(prev => ({ ...prev, clientId: client.id }));
+    setClientSearch(`${client.firstName} ${client.lastName} (${client.email})`);
+    setShowClientDropdown(false);
+  };
+
+  const selectFreelancer = (freelancer) => {
+    setSelectedFreelancer(freelancer);
+    setForm(prev => ({ ...prev, freelancerId: freelancer.id }));
+    setFreelancerSearch(`${freelancer.firstName} ${freelancer.lastName} (${freelancer.email})`);
+    setShowFreelancerDropdown(false);
+  };
+
+  const clearClient = () => {
+    setSelectedClient(null);
+    setClientSearch('');
+    setForm(prev => ({ ...prev, clientId: '' }));
+  };
+
+  const clearFreelancer = () => {
+    if (user?.userType !== 'FREELANCER') {
+      setSelectedFreelancer(null);
+      setFreelancerSearch('');
+      setForm(prev => ({ ...prev, freelancerId: '' }));
+    }
+  };
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -112,28 +206,125 @@ const SmartContractGenerator = () => {
                   placeholder="job_..."
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Client ID</label>
-                <input
-                  type="text"
-                  name="clientId"
-                  value={form.clientId}
-                  onChange={handleChange}
-                  className="w-full border rounded px-3 py-2"
-                  required
-                />
+              
+              {/* Client Search */}
+              <div className="relative">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Client {selectedClient && <span className="text-green-600">✓</span>}
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={clientSearch}
+                    onChange={(e) => {
+                      setClientSearch(e.target.value);
+                      setShowClientDropdown(true);
+                    }}
+                    onFocus={() => setShowClientDropdown(true)}
+                    placeholder="Search client by name or email..."
+                    className="w-full border rounded px-3 py-2 pr-10"
+                    required={!selectedClient}
+                  />
+                  {selectedClient ? (
+                    <button
+                      type="button"
+                      onClick={clearClient}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-600"
+                    >
+                      <FaTimes />
+                    </button>
+                  ) : (
+                    <FaSearch className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                  )}
+                </div>
+                
+                {/* Client Dropdown */}
+                {showClientDropdown && filteredClients.length > 0 && (
+                  <div className="absolute z-10 w-full mt-1 bg-white border rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                    {filteredClients.map((client) => (
+                      <button
+                        key={client.id}
+                        type="button"
+                        onClick={() => selectClient(client)}
+                        className="w-full text-left px-4 py-3 hover:bg-blue-50 border-b last:border-b-0 transition-colors"
+                      >
+                        <div className="font-medium text-gray-900">
+                          {client.firstName} {client.lastName}
+                        </div>
+                        <div className="text-sm text-gray-500">{client.email}</div>
+                        <div className="text-xs text-blue-600 mt-1">CLIENT</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                
+                {showClientDropdown && clientSearch && filteredClients.length === 0 && (
+                  <div className="absolute z-10 w-full mt-1 bg-white border rounded-lg shadow-lg p-4 text-gray-500 text-sm">
+                    No clients found. Try a different search term.
+                  </div>
+                )}
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Freelancer ID</label>
-                <input
-                  type="text"
-                  name="freelancerId"
-                  value={form.freelancerId}
-                  onChange={handleChange}
-                  className="w-full border rounded px-3 py-2"
-                  required
-                />
+              
+              {/* Freelancer Search */}
+              <div className="relative">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Freelancer {selectedFreelancer && <span className="text-green-600">✓</span>}
+                  {user?.userType === 'FREELANCER' && <span className="text-gray-500 text-xs ml-2">(You)</span>}
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={freelancerSearch}
+                    onChange={(e) => {
+                      setFreelancerSearch(e.target.value);
+                      setShowFreelancerDropdown(true);
+                    }}
+                    onFocus={() => setShowFreelancerDropdown(true)}
+                    placeholder="Search freelancer by name or email..."
+                    className="w-full border rounded px-3 py-2 pr-10"
+                    required={!selectedFreelancer}
+                    disabled={user?.userType === 'FREELANCER'}
+                  />
+                  {selectedFreelancer && user?.userType !== 'FREELANCER' ? (
+                    <button
+                      type="button"
+                      onClick={clearFreelancer}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-600"
+                    >
+                      <FaTimes />
+                    </button>
+                  ) : (
+                    <FaSearch className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                  )}
+                </div>
+                
+                {/* Freelancer Dropdown */}
+                {showFreelancerDropdown && filteredFreelancers.length > 0 && user?.userType !== 'FREELANCER' && (
+                  <div className="absolute z-10 w-full mt-1 bg-white border rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                    {filteredFreelancers.map((freelancer) => (
+                      <button
+                        key={freelancer.id}
+                        type="button"
+                        onClick={() => selectFreelancer(freelancer)}
+                        className="w-full text-left px-4 py-3 hover:bg-green-50 border-b last:border-b-0 transition-colors"
+                      >
+                        <div className="font-medium text-gray-900">
+                          {freelancer.firstName} {freelancer.lastName}
+                        </div>
+                        <div className="text-sm text-gray-500">{freelancer.email}</div>
+                        <div className="text-xs text-green-600 mt-1">FREELANCER</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                
+                {showFreelancerDropdown && freelancerSearch && filteredFreelancers.length === 0 && user?.userType !== 'FREELANCER' && (
+                  <div className="absolute z-10 w-full mt-1 bg-white border rounded-lg shadow-lg p-4 text-gray-500 text-sm">
+                    No freelancers found. Try a different search term.
+                  </div>
+                )}
               </div>
+              
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Template ID (optional)</label>
                 <input

@@ -9,14 +9,23 @@ import {
   // Smart Contracts
   getSmartContracts,
   generateSmartContract,
+  updateSmartContract,
+  getContractTemplates,
+  createContractTemplate,
+  updateContractTemplate,
+  deleteContractTemplate,
   
   // Automated Invoicing
   getInvoices,
   generateInvoice,
+  processRecurringInvoices,
+  updateInvoiceStatus,
   
   // Email Marketing
   getEmailCampaigns,
   createEmailCampaign,
+  executeEmailCampaign,
+  getEmailCampaignAnalytics,
   
   // Lead Scoring
   getLeadScores,
@@ -48,14 +57,25 @@ router.post('/rules/:ruleId/execute', executeAutomationRule);
 // ==================== SMART CONTRACTS ROUTES ====================
 router.get('/contracts', getSmartContracts);
 router.post('/contracts/generate', generateSmartContract);
+router.patch('/contracts/:contractId', updateSmartContract);
+
+// Contract Templates
+router.get('/contract-templates', getContractTemplates);
+router.post('/contract-templates', createContractTemplate);
+router.put('/contract-templates/:templateId', updateContractTemplate);
+router.delete('/contract-templates/:templateId', deleteContractTemplate);
 
 // ==================== AUTOMATED INVOICING ROUTES ====================
 router.get('/invoices', getInvoices);
 router.post('/invoices/generate', generateInvoice);
+router.post('/invoices/process-recurring', processRecurringInvoices);
+router.patch('/invoices/:invoiceId/status', updateInvoiceStatus);
 
 // ==================== EMAIL MARKETING ROUTES ====================
 router.get('/email-campaigns', getEmailCampaigns);
 router.post('/email-campaigns', createEmailCampaign);
+router.post('/email-campaigns/:campaignId/execute', executeEmailCampaign);
+router.get('/email-campaigns/:campaignId/analytics', getEmailCampaignAnalytics);
 
 // ==================== LEAD SCORING ROUTES ====================
 router.get('/lead-scores', getLeadScores);

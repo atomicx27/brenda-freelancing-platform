@@ -338,6 +338,298 @@ export const generateSmartContract = async (req: AuthenticatedRequest, res: Resp
   }
 };
 
+// Update smart contract (for signing, etc.)
+export const updateSmartContract = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { contractId } = req.params;
+    const { status } = req.body;
+    const userId = req.user!.id;
+
+    // Get existing contract
+    const existingContract = await withRetry(() =>
+      prisma.smartContract.findUnique({
+        where: { id: contractId },
+        include: {
+          client: true,
+          freelancer: true,
+          job: true
+        }
+      })
+    );
+
+    if (!existingContract) {
+      throw createError('Contract not found', 404);
+    }
+
+    // Check authorization - only client or freelancer can update
+    if (existingContract.clientId !== userId && existingContract.freelancerId !== userId) {
+      throw createError('You are not authorized to update this contract', 403);
+    }
+
+    // Determine who is signing
+    const isClient = existingContract.clientId === userId;
+    const isFreelancer = existingContract.freelancerId === userId;
+
+    // Prepare update data
+    const updateData: any = {};
+    const now = new Date();
+    
+    if (status) {
+      // Handle dual signature workflow
+      if (status === 'SIGNED' || status === 'CLIENT_SIGNED') {
+        if (isClient) {
+          // Client is signing
+          if (existingContract.clientSignedAt) {
+            throw createError('You have already signed this contract', 400);
+          }
+          
+          updateData.clientSignedAt = now;
+          
+          // If freelancer hasn't signed yet, set status to CLIENT_SIGNED
+          if (!existingContract.freelancerSignedAt) {
+            updateData.status = 'CLIENT_SIGNED';
+          } else {
+            // Both have signed now
+            updateData.status = 'SIGNED';
+            updateData.signedAt = now;
+          }
+        } else if (isFreelancer) {
+          // Freelancer is signing
+          if (existingContract.freelancerSignedAt) {
+            throw createError('You have already signed this contract', 400);
+          }
+          
+          // Freelancer can only sign if client has signed first
+          if (!existingContract.clientSignedAt) {
+            throw createError('Client must sign the contract first', 400);
+          }
+          
+          updateData.freelancerSignedAt = now;
+          
+          // Both have signed now
+          updateData.status = 'SIGNED';
+          updateData.signedAt = now;
+        }
+      } else {
+        // Other status updates
+        updateData.status = status;
+      }
+    }
+
+    // Update contract
+    const contract = await withRetry(() =>
+      prisma.smartContract.update({
+        where: { id: contractId },
+        data: updateData,
+        include: {
+          client: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true
+            }
+          },
+          freelancer: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true
+            }
+          },
+          job: {
+            select: {
+              id: true,
+              title: true
+            }
+          }
+        }
+      })
+    );
+
+    // Only trigger invoice generation when BOTH parties have signed
+    if (updateData.status === 'SIGNED' && updateData.signedAt) {
+      try {
+        const { autoGenerateInvoiceOnContractSigned } = require('../services/automationService');
+        await autoGenerateInvoiceOnContractSigned(contractId);
+        console.log(`✅ [Automation] Invoice auto-generated for fully signed contract ${contractId}`);
+      } catch (autoError: any) {
+        console.error(`⚠️ [Automation] Failed to auto-generate invoice:`, autoError.message);
+        // Don't fail the contract signing if invoice generation fails
+      }
+
+      // Emit contract signed event only when both parties have signed
+      emitEvent('CONTRACT_SIGNED', {
+        contractId: contract.id,
+        clientId: contract.clientId,
+        freelancerId: contract.freelancerId,
+        jobId: contract.jobId
+      });
+    } else if (updateData.status === 'CLIENT_SIGNED') {
+      // Emit client signed event
+      emitEvent('CONTRACT_CLIENT_SIGNED', {
+        contractId: contract.id,
+        clientId: contract.clientId,
+        freelancerId: contract.freelancerId,
+        jobId: contract.jobId
+      });
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: isClient 
+        ? (updateData.status === 'SIGNED' ? 'Contract fully signed!' : 'Contract signed and sent to freelancer')
+        : 'Contract accepted and fully signed!',
+      data: { contract }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Get contract templates
+export const getContractTemplates = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { category, isActive, page = 1, limit = 20 } = req.query;
+    const skip = (Number(page) - 1) * Number(limit);
+
+    const where: any = { isPublic: true };
+    if (category) where.category = category;
+    if (isActive !== undefined) where.isActive = isActive === 'true';
+
+    const [templates, total] = await withRetry(async () => {
+      return Promise.all([
+        prisma.contractTemplate.findMany({
+          where,
+          skip,
+          take: Number(limit),
+          orderBy: { usageCount: 'desc' }
+        }),
+        prisma.contractTemplate.count({ where })
+      ]);
+    });
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        templates,
+        pagination: {
+          total,
+          page: Number(page),
+          limit: Number(limit),
+          pages: Math.ceil(total / Number(limit))
+        }
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Create contract template
+export const createContractTemplate = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { name, description, category, content, variables, isPublic = false, terms = {} } = req.body;
+
+    const template = await withRetry(() =>
+      prisma.contractTemplate.create({
+        data: {
+          name,
+          description,
+          category,
+          content,
+          variables: variables || [],
+          terms: terms,
+          isPublic
+        }
+      })
+    );
+
+    res.status(201).json({
+      status: 'success',
+      message: 'Contract template created successfully',
+      data: { template }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Update contract template
+export const updateContractTemplate = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { templateId } = req.params;
+    const { name, description, category, content, variables, isPublic, isActive, terms } = req.body;
+
+    // Check if template exists
+    const existing = await withRetry(() =>
+      prisma.contractTemplate.findUnique({
+        where: { id: templateId }
+      })
+    );
+
+    if (!existing) {
+      throw createError('Contract template not found', 404);
+    }
+
+    const template = await withRetry(() =>
+      prisma.contractTemplate.update({
+        where: { id: templateId },
+        data: {
+          ...(name && { name }),
+          ...(description && { description }),
+          ...(category && { category }),
+          ...(content && { content }),
+          ...(variables && { variables }),
+          ...(terms && { terms }),
+          ...(isPublic !== undefined && { isPublic }),
+          ...(isActive !== undefined && { isActive })
+        }
+      })
+    );
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Contract template updated successfully',
+      data: { template }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Delete contract template
+export const deleteContractTemplate = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { templateId } = req.params;
+
+    // Check if template exists
+    const existing = await withRetry(() =>
+      prisma.contractTemplate.findUnique({
+        where: { id: templateId }
+      })
+    );
+
+    if (!existing) {
+      throw createError('Contract template not found', 404);
+    }
+
+    await withRetry(() =>
+      prisma.contractTemplate.delete({
+        where: { id: templateId }
+      })
+    );
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Contract template deleted successfully'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // ==================== AUTOMATED INVOICING ====================
 
 // Get invoices
@@ -505,6 +797,148 @@ export const generateInvoice = async (req: AuthenticatedRequest, res: Response, 
   }
 };
 
+// Process recurring invoices (called by scheduler)
+export const processRecurringInvoices = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    // Find all recurring invoices that need to be processed
+    const baseInvoices = await withRetry(() =>
+      prisma.invoice.findMany({
+        where: {
+          isRecurring: true,
+          status: 'PAID', // Only process paid invoices
+          recurringInterval: { not: null }
+        },
+        include: {
+          client: true,
+          freelancer: true,
+          job: true
+        }
+      })
+    );
+
+    const results = [];
+    for (const baseInvoice of baseInvoices) {
+      try {
+        // Calculate next due date based on interval
+        const nextDueDate = calculateNextDueDate(baseInvoice.dueDate, baseInvoice.recurringInterval!);
+        
+        // Check if it's time to create a new invoice
+        if (new Date() >= nextDueDate) {
+          // Generate invoice number first
+          const invoiceNumber = await generateInvoiceNumber();
+          
+          // Create new invoice from recurring template
+          const newInvoice = await withRetry(() =>
+            prisma.invoice.create({
+              data: {
+                invoiceNumber,
+                contractId: baseInvoice.contractId,
+                clientId: baseInvoice.clientId,
+                freelancerId: baseInvoice.freelancerId,
+                jobId: baseInvoice.jobId,
+                title: baseInvoice.title,
+                description: baseInvoice.description,
+                items: baseInvoice.items as any,
+                subtotal: baseInvoice.subtotal,
+                taxRate: baseInvoice.taxRate,
+                taxAmount: baseInvoice.taxAmount,
+                total: baseInvoice.total,
+                dueDate: nextDueDate,
+                isRecurring: false, // New invoices are not recurring templates
+                recurringInterval: null
+              }
+            })
+          );
+
+          // Emit event
+          emitEvent('INVOICE_CREATED', {
+            invoiceId: newInvoice.id,
+            clientId: newInvoice.clientId,
+            freelancerId: newInvoice.freelancerId,
+            jobId: newInvoice.jobId,
+            total: newInvoice.total,
+            isRecurring: true
+          });
+
+          results.push({
+            baseInvoiceId: baseInvoice.id,
+            newInvoiceId: newInvoice.id,
+            status: 'created'
+          });
+        }
+      } catch (error: any) {
+        results.push({
+          baseInvoiceId: baseInvoice.id,
+          status: 'failed',
+          error: error.message
+        });
+      }
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: `Processed ${results.length} recurring invoices`,
+      data: { results }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Update invoice status
+export const updateInvoiceStatus = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { invoiceId } = req.params;
+    const { status, paidAt } = req.body;
+    const userId = req.user!.id;
+
+    // Verify ownership
+    const invoice = await withRetry(() =>
+      prisma.invoice.findFirst({
+        where: {
+          id: invoiceId,
+          OR: [
+            { clientId: userId },
+            { freelancerId: userId }
+          ]
+        }
+      })
+    );
+
+    if (!invoice) {
+      throw createError('Invoice not found or unauthorized', 404);
+    }
+
+    const updated = await withRetry(() =>
+      prisma.invoice.update({
+        where: { id: invoiceId },
+        data: {
+          status: status as any,
+          paidAt: paidAt ? new Date(paidAt) : null
+        }
+      })
+    );
+
+    // Emit event
+    if (status === 'PAID') {
+      emitEvent('INVOICE_PAID', {
+        invoiceId: updated.id,
+        clientId: updated.clientId,
+        freelancerId: updated.freelancerId,
+        total: updated.total
+      });
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Invoice status updated successfully',
+      data: { invoice: updated }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // ==================== EMAIL MARKETING AUTOMATION ====================
 
 // Get email campaigns
@@ -591,6 +1025,145 @@ export const createEmailCampaign = async (req: AuthenticatedRequest, res: Respon
       status: 'success',
       message: 'Email campaign created successfully',
       data: { campaign }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Execute email campaign
+export const executeEmailCampaign = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { campaignId } = req.params;
+    const userId = req.user!.id;
+
+    // Get campaign
+    const campaign = await withRetry(() =>
+      prisma.emailCampaign.findFirst({
+        where: { id: campaignId, userId }
+      })
+    );
+
+    if (!campaign) {
+      throw createError('Email campaign not found', 404);
+    }
+
+    if (campaign.status === 'COMPLETED') {
+      throw createError('Campaign has already been sent', 400);
+    }
+
+    // Get recipients based on filters
+    const recipients = await getEmailRecipients(campaign.recipients, campaign.filters);
+
+    // Send emails
+    const results = {
+      total: recipients.length,
+      sent: 0,
+      failed: 0,
+      errors: [] as any[]
+    };
+
+    for (const recipient of recipients) {
+      try {
+        // Send email (using Resend or other email service)
+        await sendCampaignEmail(recipient, campaign);
+        
+        // Log email
+        await withRetry(() =>
+          prisma.emailLog.create({
+            data: {
+              campaignId: campaign.id,
+              recipientId: recipient.id,
+              recipientEmail: recipient.email,
+              status: 'SENT',
+              sentAt: new Date()
+            }
+          })
+        );
+
+        results.sent++;
+      } catch (error: any) {
+        results.failed++;
+        results.errors.push({
+          recipient: recipient.email,
+          error: error.message
+        });
+      }
+    }
+
+    // Update campaign status
+    await withRetry(() =>
+      prisma.emailCampaign.update({
+        where: { id: campaignId },
+        data: {
+          status: 'COMPLETED',
+          sentAt: new Date(),
+          sentCount: results.sent
+        }
+      })
+    );
+
+    // Emit event
+    emitEvent('CAMPAIGN_SENT', {
+      campaignId,
+      userId,
+      totalSent: results.sent,
+      totalFailed: results.failed
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Email campaign executed successfully',
+      data: { results }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Get campaign analytics
+export const getEmailCampaignAnalytics = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { campaignId } = req.params;
+    const userId = req.user!.id;
+
+    // Verify ownership
+    const campaign = await withRetry(() =>
+      prisma.emailCampaign.findFirst({
+        where: { id: campaignId, userId }
+      })
+    );
+
+    if (!campaign) {
+      throw createError('Email campaign not found', 404);
+    }
+
+    // Get email statistics
+    const [total, delivered, opened, clicked, bounced] = await withRetry(async () => {
+      return Promise.all([
+        prisma.emailLog.count({ where: { campaignId } }),
+        prisma.emailLog.count({ where: { campaignId, status: 'DELIVERED' } }),
+        prisma.emailLog.count({ where: { campaignId, openedAt: { not: null } } }),
+        prisma.emailLog.count({ where: { campaignId, clickedAt: { not: null } } }),
+        prisma.emailLog.count({ where: { campaignId, bouncedAt: { not: null } } })
+      ]);
+    });
+
+    const analytics = {
+      total,
+      delivered,
+      opened,
+      clicked,
+      bounced,
+      deliveryRate: total > 0 ? ((delivered / total) * 100).toFixed(2) : 0,
+      openRate: delivered > 0 ? ((opened / delivered) * 100).toFixed(2) : 0,
+      clickRate: opened > 0 ? ((clicked / opened) * 100).toFixed(2) : 0,
+      bounceRate: total > 0 ? ((bounced / total) * 100).toFixed(2) : 0
+    };
+
+    res.status(200).json({
+      status: 'success',
+      data: { analytics }
     });
   } catch (error) {
     next(error);
@@ -921,50 +1494,6 @@ const resolveActionTemplates = (value: any, context?: any): any => {
   return value;
 };
 
-// Generate contract content
-const generateContractContent = (template: any, terms: any, data: any) => {
-  if (!template) {
-    return generateDefaultContract(terms, data);
-  }
-
-  let content = template.content;
-  
-  // Replace template variables
-  const variables = template.variables || {};
-  Object.keys(variables).forEach(key => {
-    const value = data[key] || variables[key] || '';
-    content = content.replace(new RegExp(`{{${key}}}`, 'g'), value);
-  });
-
-  return content;
-};
-
-// Generate default contract
-const generateDefaultContract = (terms: any, data: any) => {
-  return `
-# Service Agreement
-
-**Project:** ${data.title || 'Freelance Project'}
-**Client:** ${data.clientId}
-**Freelancer:** ${data.freelancerId}
-
-## Terms and Conditions
-
-${terms?.description || 'Standard freelance service terms apply.'}
-
-## Payment Terms
-${terms?.payment || 'Payment to be made upon completion of work.'}
-
-## Timeline
-${terms?.timeline || 'Project timeline to be agreed upon by both parties.'}
-
-## Intellectual Property
-${terms?.ip || 'All work product remains the property of the client upon payment.'}
-
-This agreement is effective as of the date of signing by both parties.
-  `.trim();
-};
-
 // Generate invoice number
 const generateInvoiceNumber = async (): Promise<string> => {
   const year = new Date().getFullYear();
@@ -1142,5 +1671,334 @@ const generateAutomatedContract = async (action: any) => {
     await prisma.contractTemplate.update({ where: { id: templateId }, data: { usageCount: { increment: 1 } } });
   }
 };
+
+// ==================== HELPER FUNCTIONS ====================
+
+/**
+ * Generate contract content with variable substitution
+ */
+function generateContractContent(template: any, terms: any, data: any): string {
+  let content = '';
+
+  // Use template content if available, otherwise create default content
+  if (template && template.content) {
+    content = template.content;
+  } else {
+    // Default contract template
+    content = `
+# {{title}}
+
+## Contract Agreement
+
+This Contract Agreement ("Agreement") is entered into on {{currentDate}} between:
+
+**Client:** {{clientName}}
+**Freelancer:** {{freelancerName}}
+
+### Project Description
+{{description}}
+
+### Terms and Conditions
+
+#### 1. Scope of Work
+{{terms.scope}}
+
+#### 2. Payment Terms
+{{terms.payment}}
+
+#### 3. Timeline
+{{terms.timeline}}
+
+#### 4. Deliverables
+{{terms.deliverables}}
+
+#### 5. Intellectual Property
+{{terms.ip}}
+
+#### 6. Termination
+{{terms.termination}}
+
+#### 7. Confidentiality
+{{terms.confidentiality}}
+
+### Additional Terms
+{{terms.additional}}
+
+---
+
+**Client Signature:** ___________________ Date: _______________
+
+**Freelancer Signature:** ___________________ Date: _______________
+`;
+  }
+
+  // Variable substitution
+  const variables: Record<string, string> = {
+    '{{title}}': data.title || 'Untitled Contract',
+    '{{description}}': data.description || 'No description provided',
+    '{{currentDate}}': new Date().toLocaleDateString('en-US', { 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric' 
+    }),
+    '{{clientName}}': data.clientName || 'Client Name',
+    '{{freelancerName}}': data.freelancerName || 'Freelancer Name',
+    '{{terms.scope}}': terms.scope || terms.description || 'To be defined',
+    '{{terms.payment}}': terms.payment || 'To be agreed upon',
+    '{{terms.timeline}}': terms.timeline || 'To be determined',
+    '{{terms.deliverables}}': terms.deliverables || 'To be specified',
+    '{{terms.ip}}': terms.ip || 'All intellectual property rights belong to the client upon full payment.',
+    '{{terms.termination}}': terms.termination || 'Either party may terminate this agreement with 7 days written notice.',
+    '{{terms.confidentiality}}': terms.confidentiality || 'Both parties agree to keep all project information confidential.',
+    '{{terms.additional}}': terms.additional || 'N/A'
+  };
+
+  // Replace all variables
+  let processedContent = content;
+  for (const [variable, value] of Object.entries(variables)) {
+    processedContent = processedContent.replace(new RegExp(variable, 'g'), value);
+  }
+
+  return processedContent;
+}
+
+/**
+ * Calculate invoice tax and totals
+ */
+function calculateInvoiceTotals(items: any[], taxRate: number = 0): { subtotal: number; taxAmount: number; total: number } {
+  const subtotal = items.reduce((sum, item) => {
+    const itemTotal = (item.quantity || 1) * (item.rate || 0);
+    return sum + itemTotal;
+  }, 0);
+
+  const taxAmount = subtotal * (taxRate / 100);
+  const total = subtotal + taxAmount;
+
+  return {
+    subtotal: Number(subtotal.toFixed(2)),
+    taxAmount: Number(taxAmount.toFixed(2)),
+    total: Number(total.toFixed(2))
+  };
+}
+
+/**
+ * Calculate lead score based on multiple factors
+ */
+function calculateLeadScoreValue(user: any, factors: any): number {
+  let score = 0;
+  const weights = factors.weights || {};
+
+  // Profile completeness (0-25 points)
+  if (weights.profileCompleteness !== undefined) {
+    const completeness = calculateProfileCompleteness(user);
+    score += completeness * (weights.profileCompleteness / 100) * 25;
+  }
+
+  // Verification status (0-20 points)
+  if (weights.verification !== undefined) {
+    const verificationScore = user.profile?.isVerified ? 20 : 0;
+    score += verificationScore * (weights.verification / 100);
+  }
+
+  // Response time (0-15 points)
+  if (weights.responseTime !== undefined) {
+    const responseScore = calculateResponseTimeScore(user);
+    score += responseScore * (weights.responseTime / 100) * 15;
+  }
+
+  // Activity level (0-15 points)
+  if (weights.activityLevel !== undefined) {
+    const activityScore = calculateActivityScore(user);
+    score += activityScore * (weights.activityLevel / 100) * 15;
+  }
+
+  // Success rate (0-15 points)
+  if (weights.successRate !== undefined) {
+    const successScore = calculateSuccessRate(user);
+    score += successScore * (weights.successRate / 100) * 15;
+  }
+
+  // Reviews (0-10 points)
+  if (weights.reviews !== undefined) {
+    const reviewScore = calculateReviewScore(user);
+    score += reviewScore * (weights.reviews / 100) * 10;
+  }
+
+  return Math.min(100, Math.max(0, Math.round(score)));
+}
+
+function calculateProfileCompleteness(user: any): number {
+  const fields = [
+    user.firstName,
+    user.lastName,
+    user.email,
+    user.profile?.title,
+    user.profile?.bio,
+    user.profile?.skills?.length > 0,
+    user.profile?.hourlyRate,
+    user.profile?.avatar
+  ];
+  const completed = fields.filter(f => f).length;
+  return completed / fields.length;
+}
+
+function calculateResponseTimeScore(user: any): number {
+  // Placeholder - would need actual response time data
+  return 0.8; // 80% score
+}
+
+function calculateActivityScore(user: any): number {
+  // Placeholder - would calculate based on recent activity
+  const daysSinceUpdate = Math.floor((Date.now() - new Date(user.updatedAt).getTime()) / (1000 * 60 * 60 * 24));
+  if (daysSinceUpdate < 7) return 1.0;
+  if (daysSinceUpdate < 30) return 0.7;
+  if (daysSinceUpdate < 90) return 0.4;
+  return 0.1;
+}
+
+function calculateSuccessRate(user: any): number {
+  // Placeholder - would calculate from completed jobs
+  return 0.85; // 85% success rate
+}
+
+function calculateReviewScore(user: any): number {
+  // Placeholder - would calculate from review ratings
+  return 0.9; // 90% based on reviews
+}
+
+/**
+ * Calculate next due date for recurring invoices
+ */
+function calculateNextDueDate(currentDueDate: Date, interval: string): Date {
+  const nextDate = new Date(currentDueDate);
+
+  switch (interval) {
+    case 'WEEKLY':
+      nextDate.setDate(nextDate.getDate() + 7);
+      break;
+    case 'BIWEEKLY':
+      nextDate.setDate(nextDate.getDate() + 14);
+      break;
+    case 'MONTHLY':
+      nextDate.setMonth(nextDate.getMonth() + 1);
+      break;
+    case 'QUARTERLY':
+      nextDate.setMonth(nextDate.getMonth() + 3);
+      break;
+    case 'YEARLY':
+      nextDate.setFullYear(nextDate.getFullYear() + 1);
+      break;
+    default:
+      // Default to monthly
+      nextDate.setMonth(nextDate.getMonth() + 1);
+  }
+
+  return nextDate;
+}
+
+/**
+ * Get email recipients based on filters
+ */
+async function getEmailRecipients(recipientType: any, filters: any): Promise<any[]> {
+  const where: any = {};
+
+  // Apply filters
+  if (filters) {
+    if (filters.userType) where.userType = filters.userType;
+    if (filters.isVerified !== undefined) {
+      where.profile = { isVerified: filters.isVerified };
+    }
+    if (filters.minScore) {
+      where.leadScore = { score: { gte: filters.minScore } };
+    }
+  }
+
+  // Get users based on recipient type
+  switch (recipientType) {
+    case 'ALL_USERS':
+      return await prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true
+        }
+      });
+    
+    case 'FREELANCERS':
+      where.userType = 'FREELANCER';
+      return await prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true
+        }
+      });
+    
+    case 'CLIENTS':
+      where.userType = 'CLIENT';
+      return await prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true
+        }
+      });
+    
+    case 'VERIFIED_USERS':
+      where.profile = { isVerified: true };
+      return await prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true
+        }
+      });
+    
+    default:
+      return [];
+  }
+}
+
+/**
+ * Send campaign email to recipient
+ */
+async function sendCampaignEmail(recipient: any, campaign: any): Promise<void> {
+  // Placeholder for actual email sending implementation
+  // Would integrate with Resend, SendGrid, or other email service
+  
+  // For now, just log
+  console.log(`Sending campaign "${campaign.name}" to ${recipient.email}`);
+  
+  // In production, would call email service:
+  // await resend.emails.send({
+  //   from: 'no-reply@brenda.com',
+  //   to: recipient.email,
+  //   subject: campaign.subject,
+  //   html: processEmailTemplate(campaign.content, recipient)
+  // });
+}
+
+/**
+ * Process email template with variables
+ */
+function processEmailTemplate(template: string, recipient: any): string {
+  let processed = template;
+  
+  // Replace common variables
+  processed = processed.replace(/{{firstName}}/g, recipient.firstName || '');
+  processed = processed.replace(/{{lastName}}/g, recipient.lastName || '');
+  processed = processed.replace(/{{email}}/g, recipient.email || '');
+  processed = processed.replace(/{{fullName}}/g, `${recipient.firstName} ${recipient.lastName}`.trim());
+  
+  return processed;
+}
 
 

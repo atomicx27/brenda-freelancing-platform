@@ -701,27 +701,29 @@ model AutomationLog {
 }
 
 model SmartContract {
-  id           String            @id @default(cuid())
-  title        String
-  description  String?
-  jobId        String?
-  clientId     String
-  freelancerId String
-  templateId   String?
-  content      String
-  terms        Json
-  status       ContractStatus    @default(DRAFT)
-  version      String            @default("1.0")
-  signedAt     DateTime?
-  expiresAt    DateTime?
-  isActive     Boolean           @default(true)
-  createdAt    DateTime          @default(now())
-  updatedAt    DateTime          @updatedAt
-  invoices     Invoice[]
-  client       User              @relation("SmartContractClient", fields: [clientId], references: [id], onDelete: Cascade)
-  freelancer   User              @relation("SmartContractFreelancer", fields: [freelancerId], references: [id], onDelete: Cascade)
-  job          Job?              @relation(fields: [jobId], references: [id])
-  template     ContractTemplate? @relation(fields: [templateId], references: [id])
+  id                String            @id @default(cuid())
+  title             String
+  description       String?
+  jobId             String?
+  clientId          String
+  freelancerId      String
+  templateId        String?
+  content           String
+  terms             Json
+  status            ContractStatus    @default(DRAFT)
+  version           String            @default("1.0")
+  signedAt          DateTime?
+  clientSignedAt    DateTime?
+  freelancerSignedAt DateTime?
+  expiresAt         DateTime?
+  isActive          Boolean           @default(true)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  invoices          Invoice[]
+  client            User              @relation("SmartContractClient", fields: [clientId], references: [id], onDelete: Cascade)
+  freelancer        User              @relation("SmartContractFreelancer", fields: [freelancerId], references: [id], onDelete: Cascade)
+  job               Job?              @relation(fields: [jobId], references: [id])
+  template          ContractTemplate? @relation(fields: [templateId], references: [id])
 
   @@map("smart_contracts")
 }
@@ -1018,6 +1020,7 @@ enum ContractStatus {
   DRAFT
   PENDING_REVIEW
   APPROVED
+  CLIENT_SIGNED
   SIGNED
   ACTIVE
   COMPLETED
