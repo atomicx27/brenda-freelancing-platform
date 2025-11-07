@@ -7,6 +7,7 @@ import {
   createForumPost,
   getForumPost,
   createForumComment,
+  previewForumComment,
   deleteForumPost,
   
   // User Groups
@@ -18,6 +19,7 @@ import {
   createGroupPost,
   getGroupPost,
   createGroupPostComment,
+  previewGroupPostComment,
   checkGroupMembership,
   getGroupMembers,
   // join requests & moderation
@@ -102,6 +104,7 @@ router.use(authenticate);
 
 // Authenticated forum routes
 router.post('/forum/posts', createForumPost);
+router.post('/forum/posts/:postId/comments/preview', previewForumComment);
 router.post('/forum/posts/:postId/comments', createForumComment);
 router.delete('/forum/posts/:postId', deleteForumPost);
 router.get('/forum/posts/:postId/subscribed', checkSubscription);
@@ -115,6 +118,7 @@ router.get('/notifications', getNotifications);
 router.post('/groups', createUserGroup);
 router.post('/groups/:groupId/join', joinUserGroup);
 router.post('/groups/:slug/posts', createGroupPost);
+router.post('/groups/:slug/posts/:postId/comments/preview', previewGroupPostComment);
 router.post('/groups/:slug/posts/:postId/comments', createGroupPostComment);
 router.get('/groups/:slug/membership', checkGroupMembership);
 router.get('/groups/:slug/members', getGroupMembers);

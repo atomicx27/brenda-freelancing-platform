@@ -1,53 +1,10 @@
 // API service layer for Brenda frontend
-
-const stripTrailingSlash = (value = '') => value.replace(/\/+$/, '');
-
-const buildApiBaseUrl = () => {
-  if (typeof import !== 'undefined' && import.meta?.env?.VITE_API_BASE_URL) {
-    return stripTrailingSlash(import.meta.env.VITE_API_BASE_URL);
-  }
-
-  if (typeof window !== 'undefined' && window.location) {
-    return `${window.location.origin.replace(/\/+$/, '')}/api`;
-  }
-
-  return 'http://localhost:5050/api';
-};
-
-const API_BASE_URL = buildApiBaseUrl();
-
-const deriveApiOrigin = () => {
-  try {
-    const parsed = new URL(API_BASE_URL);
-    if (parsed.pathname.endsWith('/api')) {
-      parsed.pathname = parsed.pathname.replace(/\/api$/, '');
-    }
-    return stripTrailingSlash(parsed.toString());
-  } catch (error) {
-    return stripTrailingSlash(API_BASE_URL.replace(/\/api$/, ''));
-  }
-};
-
-const API_ORIGIN = deriveApiOrigin();
-
-export const apiConfig = {
-  baseURL: API_BASE_URL,
-  origin: API_ORIGIN,
-};
-
-export const resolveAssetUrl = (path = '') => {
-  if (!path) {
-    return API_ORIGIN;
-  }
-
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  return `${API_ORIGIN}${normalizedPath}`;
-};
+const API_BASE_URL = 'http://localhost:5050/api';
 
 class ApiService {
   constructor() {
     this.baseURL = API_BASE_URL;
-    this.token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    this.token = localStorage.getItem('token');
   }
 
   // Set authentication token
@@ -661,6 +618,13 @@ class ApiService {
     });
   }
 
+  async previewForumComment(postId, data) {
+    return this.request(`/community/forum/posts/${postId}/comments/preview`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   async deleteForumPost(postId) {
     return this.request(`/community/forum/posts/${postId}`, {
       method: 'DELETE'
@@ -733,6 +697,13 @@ class ApiService {
 
   async createGroupPostComment(slug, postId, data) {
     return this.request(`/community/groups/${slug}/posts/${postId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
+  async previewGroupPostComment(slug, postId, data) {
+    return this.request(`/community/groups/${slug}/posts/${postId}/comments/preview`, {
       method: 'POST',
       body: JSON.stringify(data)
     });
@@ -1148,7 +1119,7 @@ class ApiService {
 
   // Health check
   async healthCheck() {
-    return fetch(`${API_ORIGIN}/health`).then(res => res.json());
+    return fetch('http://localhost:5000/health').then(res => res.json());
   }
 }
 

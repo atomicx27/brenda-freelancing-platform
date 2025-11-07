@@ -47,6 +47,8 @@ const Forum = () => {
   const [debugBanner, setDebugBanner] = useState(false);
   const [newComment, setNewComment] = useState('');
   const [isSubscribed, setIsSubscribed] = useState(false);
+  const [commentInfo, setCommentInfo] = useState(null);
+  const [commentPreviewLoading, setCommentPreviewLoading] = useState(false);
   const hasCategories = categories && categories.length > 0;
 
   useEffect(() => {
@@ -189,6 +191,9 @@ const Forum = () => {
   const handleCreateComment = async (postId) => {
     if (!newComment.trim()) return;
 
+    setCreateError(null);
+    setCommentInfo(null);
+
     // Optimistic comment
     const tempId = `temp-${Date.now()}`;
     const tempComment = {
@@ -217,6 +222,9 @@ const Forum = () => {
 
     try {
       const response = await apiService.createForumComment(postId, { content: commentContent });
+      if (response?.data?.ai?.enhanced) {
+        setCommentInfo('We polished your comment for clarity before posting.');
+      }
 
       // Replace temp comment by reloading the post comments (simpler)
       const refreshed = await apiService.getForumPost(postId);
@@ -237,6 +245,42 @@ const Forum = () => {
         }))
       }
       setCreateError(error.message || 'Failed to post comment');
+    }
+  };
+
+  const handlePreviewComment = async (postId) => {
+    if (!newComment.trim()) {
+      setCreateError('Please enter a comment before using AI enhance.');
+      return;
+    }
+
+    setCommentPreviewLoading(true);
+    setCreateError(null);
+    setCommentInfo(null);
+
+    try {
+      const response = await apiService.previewForumComment(postId, { content: newComment });
+      const payload = response?.data || {};
+
+      if (payload.isRelevant === false) {
+        setCreateError(payload.justification || 'Your comment seems off-topic for this discussion.');
+        return;
+      }
+
+      if (payload.enhancedContent && payload.enhancedContent.trim().length > 0) {
+        setNewComment(payload.enhancedContent);
+      }
+
+      if (payload.justification) {
+        setCommentInfo(payload.justification);
+      } else {
+        setCommentInfo('AI polished your comment. Review before posting.');
+      }
+    } catch (error) {
+      console.error('Comment preview error:', error);
+      setCreateError(error.message || 'Failed to enhance comment.');
+    } finally {
+      setCommentPreviewLoading(false);
     }
   };
 
@@ -395,10 +439,24 @@ const Forum = () => {
               className="w-full p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               rows={4}
             />
-            <div className="flex justify-end mt-2">
+            {createError && (
+              <p className="mt-2 text-sm text-red-600">{createError}</p>
+            )}
+            {commentInfo && (
+              <p className="mt-2 text-sm text-green-600">{commentInfo}</p>
+            )}
+            <div className="mt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => handlePreviewComment(selectedPost.id)}
+                disabled={commentPreviewLoading}
+                className="inline-flex items-center justify-center px-4 py-2 rounded-lg border border-purple-200 text-purple-700 hover:bg-purple-50 disabled:opacity-60 disabled:cursor-not-allowed text-sm font-medium transition-colors"
+              >
+                {commentPreviewLoading ? 'Enhancing…' : 'AI Enhance Comment'}
+              </button>
               <button
                 onClick={() => handleCreateComment(selectedPost.id)}
-                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
               >
                 Post Comment
               </button>

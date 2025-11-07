@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import prisma from '../utils/prisma';
 import { AuthenticatedRequest, AppError } from '../types';
 import { createError } from '../middleware/errorHandler';
+import { enhanceCommunityComment, evaluateCommunityCommentRelevance } from '../services/aiService';
 
 // Helper for database retries
 const withRetry = async <T>(operation: () => Promise<T>, maxRetries = 3): Promise<T> => {
@@ -19,6 +20,117 @@ const withRetry = async <T>(operation: () => Promise<T>, maxRetries = 3): Promis
   throw new Error('Max retries exceeded');
 };
 
+type ForumPostContext = {
+  id: string;
+  title: string;
+  content: string | null;
+  tags: string[];
+  authorId: string | null;
+  categoryName: string | null;
+};
+
+const getForumPostContext = async (postId: string): Promise<ForumPostContext | null> => {
+  const post = await withRetry(() =>
+    prisma.forumPost.findUnique({
+      where: { id: postId },
+      select: {
+        id: true,
+        title: true,
+        content: true,
+        tags: true,
+        authorId: true,
+        category: {
+          select: {
+            name: true
+          }
+        }
+      }
+    })
+  );
+
+  if (!post) {
+    return null;
+  }
+
+  return {
+    id: post.id,
+    title: post.title,
+    content: post.content,
+    tags: post.tags ?? [],
+    authorId: post.authorId,
+    categoryName: post.category?.name ?? null
+  };
+};
+
+type GroupPostContext = {
+  group: {
+    id: string;
+    name: string | null;
+    description: string | null;
+    tags: string[];
+    isPublic: boolean;
+  };
+  post: {
+    id: string;
+    title: string;
+    content: string | null;
+    tags: string[];
+    authorId: string | null;
+  };
+};
+
+const getGroupPostContext = async (slug: string, postId: string): Promise<GroupPostContext | null> => {
+  const group = await withRetry(() =>
+    prisma.userGroup.findUnique({
+      where: { slug },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        tags: true,
+        isPublic: true
+      }
+    })
+  );
+
+  if (!group) {
+    return null;
+  }
+
+  const post = await withRetry(() =>
+    prisma.groupPost.findUnique({
+      where: { id: postId },
+      select: {
+        id: true,
+        title: true,
+        content: true,
+        tags: true,
+        authorId: true
+      }
+    })
+  );
+
+  if (!post) {
+    return null;
+  }
+
+  return {
+    group: {
+      id: group.id,
+      name: group.name,
+      description: group.description,
+      tags: group.tags ?? [],
+      isPublic: group.isPublic
+    },
+    post: {
+      id: post.id,
+      title: post.title,
+      content: post.content,
+      tags: post.tags ?? [],
+      authorId: post.authorId
+    }
+  };
+};
 // ==================== FORUM SYSTEM ====================
 
 // Get forum categories
@@ -262,10 +374,38 @@ export const createForumComment = async (req: AuthenticatedRequest, res: Respons
     const { content, parentId } = req.body;
     const authorId = req.user!.id;
 
+    const forumPost = await getForumPostContext(postId);
+    if (!forumPost) {
+      throw createError('Forum post not found', 404);
+    }
+
+    const relevance = await evaluateCommunityCommentRelevance(
+      {
+        topic: forumPost.title,
+        category: forumPost.categoryName,
+        tags: forumPost.tags,
+        description: forumPost.content
+      },
+      content
+    );
+
+    if (!relevance.isRelevant) {
+      res.status(400).json({
+        status: 'error',
+        message:
+          relevance.justification ||
+          'Your comment seems unrelated to this discussion. Please keep replies on topic.'
+      });
+      return;
+    }
+
+    const enhancedContent = await enhanceCommunityComment(content);
+    const finalContent = enhancedContent?.trim() || content;
+
     const comment = await withRetry(() =>
       prisma.forumComment.create({
         data: {
-          content,
+          content: finalContent,
           postId,
           authorId,
           parentId: parentId || null
@@ -296,9 +436,8 @@ export const createForumComment = async (req: AuthenticatedRequest, res: Respons
       const subs = await withRetry(() => (prisma as any).forumSubscription.findMany({ where: { postId } }));
       const userIds = (Array.isArray(subs) ? subs : []).map((s: any) => s.userId).filter((uid: any) => uid !== authorId);
       // Also include post author if not the commenter
-      const post = await withRetry(() => prisma.forumPost.findUnique({ where: { id: postId } }));
-      if (post && post.authorId && post.authorId !== authorId && !userIds.includes(post.authorId)) {
-        userIds.push(post.authorId);
+      if (forumPost.authorId && forumPost.authorId !== authorId && !userIds.includes(forumPost.authorId)) {
+        userIds.push(forumPost.authorId);
       }
 
       for (const uid of userIds) {
@@ -311,7 +450,14 @@ export const createForumComment = async (req: AuthenticatedRequest, res: Respons
     res.status(201).json({
       status: 'success',
       message: 'Comment created successfully',
-      data: { comment }
+      data: {
+        comment,
+        ai: {
+          enhanced: finalContent.trim() !== content.trim(),
+          original: content,
+          justification: relevance.justification || null
+        }
+      }
     });
   } catch (error) {
     next(error);
@@ -905,6 +1051,53 @@ export const getGroupPost = async (req: Request, res: Response, next: NextFuncti
   }
 };
 
+export const previewForumComment = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { postId } = req.params;
+    const { content } = req.body as { content: string };
+
+    if (!content || !content.trim()) {
+      res.status(400).json({ status: 'error', message: 'Comment content is required.' });
+      return;
+    }
+
+    const forumPost = await getForumPostContext(postId);
+    if (!forumPost) {
+      throw createError('Forum post not found', 404);
+    }
+
+    const relevance = await evaluateCommunityCommentRelevance(
+      {
+        topic: forumPost.title,
+        category: forumPost.categoryName,
+        tags: forumPost.tags,
+        description: forumPost.content
+      },
+      content
+    );
+
+    let enhancedContent = content;
+    if (relevance.isRelevant) {
+      const polished = await enhanceCommunityComment(content);
+      if (polished && polished.trim().length > 0) {
+        enhancedContent = polished.trim();
+      }
+    }
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        enhancedContent,
+        originalContent: content,
+        isRelevant: relevance.isRelevant,
+        justification: relevance.justification || null
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // Create comment on a group post
 export const createGroupPostComment = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -912,17 +1105,12 @@ export const createGroupPostComment = async (req: AuthenticatedRequest, res: Res
     const { content, parentId } = req.body;
     const userId = req.user!.id;
 
-    const group = await withRetry(() => prisma.userGroup.findUnique({ where: { slug } }));
-    if (!group) {
-      res.status(404).json({ status: 'error', message: 'Group not found' });
+    const context = await getGroupPostContext(slug, postId);
+    if (!context) {
+      res.status(404).json({ status: 'error', message: 'Group or post not found' });
       return;
     }
-
-    const post = await withRetry(() => prisma.groupPost.findUnique({ where: { id: postId } }));
-    if (!post) {
-      res.status(404).json({ status: 'error', message: 'Post not found' });
-      return;
-    }
+    const { group, post } = context;
 
     // If group is private, ensure user is member
     if (!group.isPublic) {
@@ -935,9 +1123,32 @@ export const createGroupPostComment = async (req: AuthenticatedRequest, res: Res
       }
     }
 
+    const relevance = await evaluateCommunityCommentRelevance(
+      {
+        topic: post.title,
+        category: group.name,
+        tags: [...(group.tags || []), ...(post.tags || [])],
+        description: group.description || post.content
+      },
+      content
+    );
+
+    if (!relevance.isRelevant) {
+      res.status(400).json({
+        status: 'error',
+        message:
+          relevance.justification ||
+          'Your comment seems unrelated to this group topic. Please keep the discussion focused.'
+      });
+      return;
+    }
+
+    const enhancedContent = await enhanceCommunityComment(content);
+    const finalContent = enhancedContent?.trim() || content;
+
     const comment = await withRetry(() =>
       prisma.groupPostComment.create({
-        data: { content, postId, authorId: userId, parentId },
+        data: { content: finalContent, postId, authorId: userId, parentId },
         include: { author: { select: { id: true, firstName: true, lastName: true, avatar: true } } }
       })
     );
@@ -945,7 +1156,68 @@ export const createGroupPostComment = async (req: AuthenticatedRequest, res: Res
     // increment comment count
     await withRetry(() => prisma.groupPost.update({ where: { id: postId }, data: { commentCount: { increment: 1 } } }));
 
-    res.status(201).json({ status: 'success', message: 'Comment added', data: { comment } });
+    res.status(201).json({
+      status: 'success',
+      message: 'Comment added',
+      data: {
+        comment,
+        ai: {
+          enhanced: finalContent.trim() !== content.trim(),
+          original: content,
+          justification: relevance.justification || null
+        }
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const previewGroupPostComment = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { slug, postId } = req.params;
+    const { content } = req.body as { content: string };
+
+    if (!content || !content.trim()) {
+      res.status(400).json({ status: 'error', message: 'Comment content is required.' });
+      return;
+    }
+
+    const context = await getGroupPostContext(slug, postId);
+    if (!context) {
+      res.status(404).json({ status: 'error', message: 'Group or post not found' });
+      return;
+    }
+
+    const { group, post } = context;
+
+    const relevance = await evaluateCommunityCommentRelevance(
+      {
+        topic: post.title,
+        category: group.name,
+        tags: [...(group.tags || []), ...(post.tags || [])],
+        description: group.description || post.content
+      },
+      content
+    );
+
+    let enhancedContent = content;
+    if (relevance.isRelevant) {
+      const polished = await enhanceCommunityComment(content);
+      if (polished && polished.trim().length > 0) {
+        enhancedContent = polished.trim();
+      }
+    }
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        enhancedContent,
+        originalContent: content,
+        isRelevant: relevance.isRelevant,
+        justification: relevance.justification || null
+      }
+    });
   } catch (error) {
     next(error);
   }

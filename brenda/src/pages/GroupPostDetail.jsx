@@ -13,6 +13,9 @@ const GroupPostDetail = () => {
   const [replyingTo, setReplyingTo] = useState({});
   const [newComment, setNewComment] = useState('');
   const [posting, setPosting] = useState(false);
+  const [commentError, setCommentError] = useState(null);
+  const [commentInfo, setCommentInfo] = useState(null);
+  const [commentPreviewLoading, setCommentPreviewLoading] = useState(false);
 
   useEffect(() => {
     const load = async () => {
@@ -42,17 +45,61 @@ const GroupPostDetail = () => {
       alert('You must join the group to comment.');
       return;
     }
+    setCommentError(null);
+    setCommentInfo(null);
     setPosting(true);
     try {
       const res = await apiService.createGroupPostComment(slug, postId, { content: newComment });
       const created = res?.data?.comment;
       if (created) setComments(prev => [created, ...prev]);
+      if (res?.data?.ai?.enhanced) {
+        setCommentInfo('We polished your comment for clarity before posting.');
+      }
       setNewComment('');
     } catch (err) {
       console.error('Failed to post comment', err);
-      if (err?.message?.includes('403')) alert('You must be a group member to comment.');
+      if (err?.message?.includes('403')) {
+        alert('You must be a group member to comment.');
+      } else {
+        setCommentError(err?.message || 'Failed to post comment.');
+      }
     } finally {
       setPosting(false);
+    }
+  };
+
+  const handlePreviewComment = async () => {
+    if (!newComment.trim()) {
+      setCommentError('Please enter a comment before using AI enhance.');
+      return;
+    }
+    if (!isMember) {
+      setCommentError('Join the group to use AI assistance.');
+      return;
+    }
+    setCommentError(null);
+    setCommentInfo(null);
+    setCommentPreviewLoading(true);
+    try {
+      const response = await apiService.previewGroupPostComment(slug, postId, { content: newComment });
+      const payload = response?.data || {};
+      if (payload.isRelevant === false) {
+        setCommentError(payload.justification || 'Your comment seems off-topic for this group.');
+        return;
+      }
+      if (payload.enhancedContent && payload.enhancedContent.trim().length > 0) {
+        setNewComment(payload.enhancedContent);
+      }
+      if (payload.justification) {
+        setCommentInfo(payload.justification);
+      } else {
+        setCommentInfo('AI polished your comment. Review before posting.');
+      }
+    } catch (err) {
+      console.error('Comment preview failed', err);
+      setCommentError(err?.message || 'Failed to enhance comment.');
+    } finally {
+      setCommentPreviewLoading(false);
     }
   };
 
@@ -77,10 +124,14 @@ const GroupPostDetail = () => {
       if (created) {
         setComments(prev => prev.map(c => c.id === parentId ? { ...c, replies: [created, ...(c.replies || []).filter(r => r.id !== tempId)] } : c));
       }
+      if (res?.data?.ai?.enhanced) {
+        alert('AI polished your reply before posting.');
+      }
     } catch (err) {
       console.error('Reply failed', err);
       // remove temp reply
       setComments(prev => prev.map(c => c.id === parentId ? { ...c, replies: (c.replies || []).filter(r => r.id !== tempId) } : c));
+      alert(err?.message || 'Reply failed.');
     } finally {
       setReplyingTo(prev => ({ ...prev, [parentId]: false }));
     }
@@ -126,8 +177,18 @@ const GroupPostDetail = () => {
 
           <form onSubmit={handlePostComment} className="mb-4">
             <textarea value={newComment} onChange={e => setNewComment(e.target.value)} rows={4} className="w-full border rounded p-2" placeholder={isMember ? 'Write a comment...' : 'Join the group to comment.'} disabled={!isMember} />
-            <div className="flex justify-end mt-2">
-              <button type="submit" disabled={!isMember || posting} className="px-4 py-2 bg-blue-600 text-white rounded">{posting ? 'Posting...' : 'Post Comment'}</button>
+            {commentError && <p className="mt-2 text-sm text-red-600">{commentError}</p>}
+            {commentInfo && <p className="mt-2 text-sm text-green-600">{commentInfo}</p>}
+            <div className="mt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <button
+                type="button"
+                onClick={handlePreviewComment}
+                disabled={!isMember || commentPreviewLoading}
+                className="inline-flex items-center justify-center px-4 py-2 rounded-lg border border-purple-200 text-purple-700 hover:bg-purple-50 disabled:opacity-60 disabled:cursor-not-allowed text-sm font-medium transition-colors"
+              >
+                {commentPreviewLoading ? 'Enhancing…' : 'AI Enhance Comment'}
+              </button>
+              <button type="submit" disabled={!isMember || posting} className="px-4 py-2 bg-blue-600 text-white rounded transition-colors hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed">{posting ? 'Posting...' : 'Post Comment'}</button>
             </div>
           </form>
 

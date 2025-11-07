@@ -157,6 +157,91 @@ const sanitizeSnippet = (text: string | undefined | null, limit = 1200): string 
   return normalized.length > limit ? `${normalized.slice(0, limit)}…` : normalized;
 };
 
+export async function enhanceCommunityComment(originalComment: string): Promise<string> {
+  if (!originalComment || originalComment.trim().length === 0) {
+    return originalComment;
+  }
+
+  try {
+    const prompt = `You are an assistant that helps users clean up community comments.
+Rewrite the following text so it stays the same length (±10%), keeps every technical term, and does NOT add or remove ideas. Just polish grammar, structure, and tone so it feels thoughtful yet concise.
+
+Return ONLY the revised comment text—no quotes, no bullet points, no commentary.
+
+Comment:
+${originalComment}`;
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text().trim();
+    if (!text) {
+      return originalComment;
+    }
+    return text;
+  } catch (error) {
+    console.error('Error enhancing community comment with AI:', error);
+    return originalComment;
+  }
+}
+
+interface CommentRelevanceInput {
+  topic: string;
+  category?: string | null;
+  tags?: string[];
+  description?: string | null;
+}
+
+interface CommentRelevanceResult {
+  isRelevant: boolean;
+  justification?: string;
+}
+
+export async function evaluateCommunityCommentRelevance(
+  context: CommentRelevanceInput,
+  comment: string
+): Promise<CommentRelevanceResult> {
+  if (!comment || comment.trim().length === 0) {
+    return { isRelevant: false, justification: 'Comment is empty.' };
+  }
+
+  try {
+    const prompt = `You moderate community comments. Decide if the comment actually discusses the group/forum topic.
+
+Topic title: ${context.topic || 'N/A'}
+Category: ${context.category || 'N/A'}
+Description: ${context.description || 'No additional description provided.'}
+Tags: ${(context.tags || []).join(', ') || 'None'}
+
+Comment: ${comment}
+
+Return ONLY JSON with this shape:
+{
+  "isRelevant": true/false,
+  "justification": "Short sentence explaining the decision"
+}
+
+Mark as NOT relevant if the content is off-topic (e.g., entirely discussing a different technology when the group is about another).`;
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text().trim();
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) {
+      return { isRelevant: true };
+    }
+
+    const parsed = JSON.parse(match[0]);
+    return {
+      isRelevant: Boolean(parsed?.isRelevant),
+      justification: typeof parsed?.justification === 'string' ? parsed.justification : undefined
+    };
+  } catch (error) {
+    console.error('Error validating community comment relevance:', error);
+    // Fail open to avoid blocking users when AI is down
+    return { isRelevant: true };
+  }
+}
+
 const buildFallbackMatches = (profile: JobMatchProfileInput | null, jobs: JobMatchJobInput[]): Record<string, JobMatchAnalysisOutput> => {
   const fallback: Record<string, JobMatchAnalysisOutput> = {};
   const profileSkillSet = new Set((profile?.skills ?? []).map((skill) => skill.toLowerCase()));
@@ -733,6 +818,8 @@ export default {
   suggestProfileFields,
   generateJobMatchAnalysis,
   generateApplicantComparison,
+  enhanceCommunityComment,
+  evaluateCommunityCommentRelevance,
 };
 
 /**

@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext'
 import HeadTag from '../components/HeadTag.jsx'
 import Footer from '../components/Footer.jsx'
 import ProfilePictureUpload from '../components/ProfilePictureUpload.jsx'
-import apiService, { resolveAssetUrl } from '../services/api'
+import apiService from '../services/api'
 
 export default function Profile() {
   const { user, updateProfile, loading } = useAuth()
@@ -434,7 +434,7 @@ export default function Profile() {
         <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
           <div className="flex items-center space-x-6">
             <ProfilePictureUpload
-              currentAvatar={avatar ? resolveAssetUrl(avatar) : null}
+              currentAvatar={avatar ? `http://localhost:5000${avatar}` : null}
               onUpload={handleAvatarUpload}
               onError={handleAvatarError}
               userId={user.id}
