@@ -1,9 +1,9 @@
 // File upload utility for Brenda frontend
-import apiService from '../services/api';
+import apiService, { apiConfig } from '../services/api';
 
 class FileUploadService {
   constructor() {
-    this.baseURL = 'http://localhost:5000';
+    this.baseURL = apiConfig.origin;
   }
 
   // Upload profile picture

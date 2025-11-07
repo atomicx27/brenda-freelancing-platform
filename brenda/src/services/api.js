@@ -1,10 +1,53 @@
 // API service layer for Brenda frontend
-const API_BASE_URL = 'http://localhost:5050/api';
+
+const stripTrailingSlash = (value = '') => value.replace(/\/+$/, '');
+
+const buildApiBaseUrl = () => {
+  if (typeof import !== 'undefined' && import.meta?.env?.VITE_API_BASE_URL) {
+    return stripTrailingSlash(import.meta.env.VITE_API_BASE_URL);
+  }
+
+  if (typeof window !== 'undefined' && window.location) {
+    return `${window.location.origin.replace(/\/+$/, '')}/api`;
+  }
+
+  return 'http://localhost:5050/api';
+};
+
+const API_BASE_URL = buildApiBaseUrl();
+
+const deriveApiOrigin = () => {
+  try {
+    const parsed = new URL(API_BASE_URL);
+    if (parsed.pathname.endsWith('/api')) {
+      parsed.pathname = parsed.pathname.replace(/\/api$/, '');
+    }
+    return stripTrailingSlash(parsed.toString());
+  } catch (error) {
+    return stripTrailingSlash(API_BASE_URL.replace(/\/api$/, ''));
+  }
+};
+
+const API_ORIGIN = deriveApiOrigin();
+
+export const apiConfig = {
+  baseURL: API_BASE_URL,
+  origin: API_ORIGIN,
+};
+
+export const resolveAssetUrl = (path = '') => {
+  if (!path) {
+    return API_ORIGIN;
+  }
+
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${API_ORIGIN}${normalizedPath}`;
+};
 
 class ApiService {
   constructor() {
     this.baseURL = API_BASE_URL;
-    this.token = localStorage.getItem('token');
+    this.token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
   }
 
   // Set authentication token
@@ -1105,7 +1148,7 @@ class ApiService {
 
   // Health check
   async healthCheck() {
-    return fetch('http://localhost:5000/health').then(res => res.json());
+    return fetch(`${API_ORIGIN}/health`).then(res => res.json());
   }
 }
 
