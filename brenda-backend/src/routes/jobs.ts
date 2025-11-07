@@ -10,7 +10,8 @@ import {
   getJobCategories,
   getPopularSkills,
   createJobValidation,
-  updateJobValidation
+  updateJobValidation,
+  getJobApplicantAnalysis
 } from '../controllers/jobController';
 import { authenticate, optionalAuthenticate } from '../middleware/auth';
 import { validate } from '../utils/validation';
@@ -22,6 +23,7 @@ router.get('/', optionalAuthenticate, getAllJobs);
 router.get('/todays', optionalAuthenticate, getTodaysJobs);
 router.get('/categories', getJobCategories);
 router.get('/popular-skills', getPopularSkills);
+router.get('/:id/applicants/analysis', authenticate, getJobApplicantAnalysis);
 router.get('/:id', optionalAuthenticate, getJobById);
 
 // All other routes require authentication

@@ -9,8 +9,8 @@ const ProposalForm = ({
   onCancel, 
   isLoading = false,
   existingProposal = null,
-  minWords = 50,
-  maxWords = 2000,
+  minCharacters = 50,
+  maxCharacters = 2000,
 }) => {
   const [formData, setFormData] = useState({
     coverLetter: '',
@@ -25,6 +25,9 @@ const ProposalForm = ({
   const [analysisResult, setAnalysisResult] = useState(null)
   const [loadingAnalysis, setLoadingAnalysis] = useState(false)
 
+  const minWordsForAI = Math.max(20, Math.round(minCharacters / 5))
+  const maxWordsForAI = Math.max(minWordsForAI + 50, Math.round(maxCharacters / 5))
+
   useEffect(() => {
     if (existingProposal) {
       setFormData({
@@ -37,6 +40,9 @@ const ProposalForm = ({
 
   const handleChange = (e) => {
     const { name, value } = e.target
+    if (name === 'coverLetter' && value.length > maxCharacters) {
+      return
+    }
     setFormData(prev => ({
       ...prev,
       [name]: value
@@ -75,10 +81,18 @@ const ProposalForm = ({
   }
 
   const handleAnalyzeProposal = async () => {
-    if (!formData.coverLetter || formData.coverLetter.trim().length < minWords) {
+    if (!formData.coverLetter || formData.coverLetter.trim().length < minCharacters) {
       setErrors(prev => ({
         ...prev,
-        coverLetter: `Please write at least ${minWords} characters before analyzing`
+        coverLetter: `Please write at least ${minCharacters} characters before analyzing`
+      }))
+      return
+    }
+
+    if (formData.coverLetter.trim().length > maxCharacters) {
+      setErrors(prev => ({
+        ...prev,
+        coverLetter: `Cover letter must be under ${maxCharacters} characters`
       }))
       return
     }
@@ -118,11 +132,14 @@ const ProposalForm = ({
     
     // Basic validation
     const newErrors = {}
+    const trimmedCoverLetter = formData.coverLetter.trim()
     
-    if (!formData.coverLetter.trim()) {
+    if (!trimmedCoverLetter) {
       newErrors.coverLetter = 'Cover letter is required'
-    } else if (formData.coverLetter.trim().length < minWords) {
-      newErrors.coverLetter = `Cover letter must be at least ${minWords} characters`
+    } else if (trimmedCoverLetter.length < minCharacters) {
+      newErrors.coverLetter = `Cover letter must be at least ${minCharacters} characters`
+    } else if (trimmedCoverLetter.length > maxCharacters) {
+      newErrors.coverLetter = `Cover letter cannot exceed ${maxCharacters} characters`
     }
     
     if (Object.keys(newErrors).length > 0) {
@@ -133,7 +150,7 @@ const ProposalForm = ({
     // Process form data
     const processedData = {
       jobId: job.id,
-      coverLetter: formData.coverLetter.trim(),
+      coverLetter: trimmedCoverLetter,
       proposedRate: formData.proposedRate ? parseFloat(formData.proposedRate) : null,
       estimatedDuration: formData.estimatedDuration.trim() || null
     }
@@ -220,8 +237,8 @@ const ProposalForm = ({
                   jobTitle: job.title,
                   jobDescription: job.description,
                   // Use the same cover-letter limits enforced by this form
-                  minWords,
-                  maxWords
+                  minWords: minWordsForAI,
+                  maxWords: maxWordsForAI
                 }}
                 buttonText="Enhance with AI"
                 type="proposal"
@@ -229,7 +246,7 @@ const ProposalForm = ({
               <button
                 type="button"
                 onClick={handleAnalyzeProposal}
-                disabled={loadingAnalysis || !formData.coverLetter || formData.coverLetter.trim().length < minWords}
+                disabled={loadingAnalysis || !formData.coverLetter || formData.coverLetter.trim().length < minCharacters}
                 className="flex items-center gap-2 px-3 py-1.5 text-sm bg-gradient-to-r from-green-500 to-teal-500 text-white rounded-lg hover:from-green-600 hover:to-teal-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
               >
                 <FaChartLine />
@@ -242,6 +259,7 @@ const ProposalForm = ({
             value={formData.coverLetter}
             onChange={handleChange}
             rows={8}
+            maxLength={maxCharacters}
             className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
               errors.coverLetter ? 'border-red-500' : 'border-gray-300'
             }`}
@@ -252,7 +270,7 @@ const ProposalForm = ({
               <p className="text-red-500 text-sm">{errors.coverLetter}</p>
             )}
             <p className="text-gray-500 text-sm ml-auto">
-              {formData.coverLetter.length}/{maxWords} characters
+              {formData.coverLetter.length}/{maxCharacters} characters
             </p>
           </div>
         </div>

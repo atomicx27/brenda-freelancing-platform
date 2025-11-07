@@ -331,6 +331,10 @@ class ApiService {
     return this.request(`/jobs/${id}`);
   }
 
+  async getJobApplicantAnalysis(jobId) {
+    return this.request(`/jobs/${jobId}/applicants/analysis`);
+  }
+
   async getUserJobs(params = {}) {
     const queryString = new URLSearchParams(params).toString();
     return this.request(`/jobs/my/jobs${queryString ? `?${queryString}` : ''}`);

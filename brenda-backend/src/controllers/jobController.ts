@@ -3,7 +3,50 @@ import { body, validationResult } from 'express-validator';
 import { createHash } from 'crypto';
 import { ApiResponse, AuthenticatedRequest } from '../types';
 import prisma from '../utils/prisma';
-import { generateJobMatchAnalysis } from '../services/aiService';
+import { generateJobMatchAnalysis, generateApplicantComparison } from '../services/aiService';
+
+interface ApplicantAnalysisData {
+  userId: string;
+  name: string;
+  headline?: string | null;
+  availability?: string | null;
+  hourlyRate?: number | null;
+  experienceYears?: number | null;
+  languages: string[];
+  primarySkills: string[];
+  resumeHighlights: string[];
+  recentProjects: string[];
+  achievements: string[];
+  matchScore: number;
+  skillMatchPercent: number;
+  skillOverlapCount: number;
+  overlappingSkills: string[];
+  proposedRate?: number | null;
+  estimatedDuration?: string | null;
+  proposalId: string;
+  submittedAt: Date;
+  proposalSummary?: string | null;
+  resumeUpdatedAt?: Date | null;
+  coverLetterStructured?: any;
+  coverLetterCharCount?: number;
+}
+
+type SuitabilityLevel = 'Excellent' | 'Good' | 'Moderate' | 'Limited';
+
+interface ApplicantInsightSummary {
+  userId: string;
+  summary: string;
+  pros: string[];
+  cons: string[];
+  recommendedFocus: string;
+  suitability: SuitabilityLevel;
+}
+
+interface ApplicantInsightsResult {
+  overallSummary: string;
+  comparisonNotes: string[];
+  applicants: ApplicantInsightSummary[];
+}
 
 // Validation rules for job creation
 export const createJobValidation = [
@@ -434,6 +477,282 @@ const enrichJobsWithMatchAnalysis = async (jobs: any[], req: AuthenticatedReques
   });
 };
 
+const buildFreelancerSnapshot = async (userId: string) => {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      bio: true,
+      profile: {
+        select: {
+          title: true,
+          availability: true,
+          experience: true,
+          hourlyRate: true,
+          languages: true,
+          skills: true,
+          resumeSkills: true,
+          resumeExperience: true,
+          resumeProjects: true,
+          resumeAchievements: true,
+          resumeText: true,
+          resumeUploadedAt: true
+        }
+      }
+    }
+  });
+
+  if (!user) {
+    return null;
+  }
+
+  const profile = user.profile;
+  if (!profile) {
+    return {
+      user,
+      skills: [],
+      languages: [],
+      experienceEntries: [],
+      projectEntries: [],
+      achievementEntries: [],
+      resumeHighlights: [],
+      profileInput: null
+    };
+  }
+
+  const combinedSkills = uniqueStringArray([
+    ...(profile.skills ?? []),
+    ...(Array.isArray(profile.resumeSkills) ? profile.resumeSkills : [])
+  ]);
+
+  const languages = uniqueStringArray(profile.languages ?? [], 16);
+  const experienceEntries = normalizeProfileEntryArray(profile.resumeExperience as any);
+  const projectEntries = normalizeProfileEntryArray(profile.resumeProjects as any);
+  const achievementEntries = normalizeProfileEntryArray(profile.resumeAchievements as any);
+
+  const resumeHighlights = [...experienceEntries, ...projectEntries]
+    .slice(0, 6)
+    .map((entry) => `${entry.title}${entry.description ? `: ${entry.description}` : ''}`);
+
+  const profileInput = {
+    name: [user.firstName, user.lastName].filter(Boolean).join(' ') || undefined,
+    title: profile.title || undefined,
+    bio: user.bio || undefined,
+    availability: profile.availability || undefined,
+    skills: combinedSkills,
+    languages,
+    experienceHighlights: experienceEntries.map((entry) => `${entry.title}${entry.description ? `: ${entry.description}` : ''}`),
+    projectHighlights: projectEntries.map((entry) => `${entry.title}${entry.description ? `: ${entry.description}` : ''}`),
+    achievementHighlights: achievementEntries.map((entry) => `${entry.title}${entry.description ? `: ${entry.description}` : ''}`),
+    resumeText: profile.resumeText || undefined,
+  };
+
+  return {
+    user,
+    profile,
+    skills: combinedSkills,
+    languages,
+    experienceEntries,
+    projectEntries,
+    achievementEntries,
+    resumeHighlights,
+    profileInput
+  };
+};
+
+const computeMatchScoreFromSkills = (jobSkills: string[], freelancerSkills: string[]) => {
+  const jobSkillSet = new Set((jobSkills ?? []).map((skill) => skill.toLowerCase()));
+  const freelancerSkillSet = new Set((freelancerSkills ?? []).map((skill) => skill.toLowerCase()));
+
+  if (jobSkillSet.size === 0 && freelancerSkillSet.size === 0) {
+    return {
+      score: 45,
+      overlapCount: 0,
+      overlapPercent: 0,
+      overlappingSkills: [] as string[]
+    };
+  }
+
+  const overlapping: string[] = [];
+  jobSkillSet.forEach((skill) => {
+    if (freelancerSkillSet.has(skill)) {
+      overlapping.push(skill);
+    }
+  });
+
+  const overlapCount = overlapping.length;
+  const overlapPercent = jobSkillSet.size > 0 ? (overlapCount / jobSkillSet.size) * 100 : 45;
+
+  let rawScore = overlapPercent;
+  if (overlapCount === jobSkillSet.size && jobSkillSet.size > 0) {
+    rawScore = 94;
+  } else if (overlapCount === 0 && jobSkillSet.size > 0) {
+    rawScore = 20;
+  } else if (jobSkillSet.size === 0) {
+    rawScore = 45;
+  }
+
+  const score = clampValueToPercentage(Math.round(rawScore / 5) * 5);
+
+  return {
+    score,
+    overlapCount,
+    overlapPercent: Number.isFinite(overlapPercent) ? overlapPercent : 0,
+    overlappingSkills: overlapping
+  };
+};
+
+const buildApplicantComparisonFallback = (jobTitle: string, applicants: ApplicantAnalysisData[]): ApplicantInsightsResult => {
+  if (!applicants.length) {
+    return {
+      overallSummary: 'No applicants submitted comparable data yet.',
+      comparisonNotes: [],
+      applicants: []
+    };
+  }
+
+  const sortedByMatch = [...applicants].sort((a, b) => (b.matchScore ?? 0) - (a.matchScore ?? 0));
+  const best = sortedByMatch[0];
+  const lowestRateCandidate = applicants
+    .filter((item) => typeof item.proposedRate === 'number')
+    .sort((a, b) => (a.proposedRate ?? Infinity) - (b.proposedRate ?? Infinity))[0] || null;
+  const fastestCandidate = applicants
+    .filter((item) => item.estimatedDuration)
+    .sort((a, b) => getDurationRank(a.estimatedDuration) - getDurationRank(b.estimatedDuration))[0] || null;
+  const mostExperienced = applicants
+    .filter((item) => typeof item.experienceYears === 'number')
+    .sort((a, b) => (b.experienceYears ?? 0) - (a.experienceYears ?? 0))[0] || null;
+
+  const overallSummaryParts: string[] = [];
+  if (best) {
+    overallSummaryParts.push(`${best.name} currently leads the field for ${jobTitle} with a match score of ${best.matchScore}%`);
+  }
+  if (lowestRateCandidate && (!best || lowestRateCandidate.userId !== best.userId)) {
+    overallSummaryParts.push(`${lowestRateCandidate.name} offers the most budget-friendly proposal${lowestRateCandidate.proposedRate != null ? ` at $${Math.round(lowestRateCandidate.proposedRate)}` : ''}.`);
+  }
+  if (fastestCandidate && (!best || fastestCandidate.userId !== best.userId)) {
+    overallSummaryParts.push(`${fastestCandidate.name} projects the quickest delivery (${fastestCandidate.estimatedDuration || 'timeline not specified'}).`);
+  }
+  if (overallSummaryParts.length === 0) {
+    overallSummaryParts.push('Applicants show similar profiles; compare proposed cost and delivery timelines to differentiate.');
+  }
+
+  const suitabilityFromScore = (score: number): SuitabilityLevel => {
+    if (!Number.isFinite(score)) return 'Moderate';
+    if (score >= 75) return 'Excellent';
+    if (score >= 55) return 'Good';
+    if (score >= 35) return 'Moderate';
+    return 'Limited';
+  };
+
+  const buildPros = (applicant: ApplicantAnalysisData) => {
+    const pros: string[] = [];
+    if (applicant.matchScore >= 60) pros.push('Strong skill/job alignment');
+    if (applicant.proposedRate != null && lowestRateCandidate && applicant.userId === lowestRateCandidate.userId) pros.push('Most competitive proposal cost');
+    if (applicant.estimatedDuration && fastestCandidate && applicant.userId === fastestCandidate.userId) pros.push(`Fastest timeline (${applicant.estimatedDuration})`);
+    if (applicant.experienceYears != null && mostExperienced && applicant.userId === mostExperienced.userId) pros.push('Highest reported experience');
+    if (applicant.overlappingSkills.length > 0) pros.push(`${applicant.overlappingSkills.length} shared skill(s)`);
+    return pros.slice(0, 3);
+  };
+
+  const buildCons = (applicant: ApplicantAnalysisData) => {
+    const cons: string[] = [];
+    if (applicant.overlappingSkills.length === 0) cons.push('No overlap with listed job skills');
+    if (applicant.matchScore < 40) cons.push('Weak overall alignment');
+    if (applicant.proposedRate == null) cons.push('Proposal cost not provided');
+    if (!applicant.estimatedDuration) cons.push('Timeline missing');
+    if ((applicant.coverLetterCharCount ?? 0) < 300) cons.push('Proposal lacks detail');
+    return cons.slice(0, 3);
+  };
+
+  const comparisonNotes: string[] = [];
+  comparisonNotes.push(`Top match: ${best ? `${best.name} (${best.matchScore}%)` : 'N/A'}.`);
+  if (lowestRateCandidate) {
+    comparisonNotes.push(`Lowest cost: ${lowestRateCandidate.name}${lowestRateCandidate.proposedRate != null ? ` ($${Math.round(lowestRateCandidate.proposedRate)})` : ''}.`);
+  }
+  if (fastestCandidate) {
+    comparisonNotes.push(`Fastest delivery: ${fastestCandidate.name} (${fastestCandidate.estimatedDuration || 'N/A'}).`);
+  }
+  if (mostExperienced) {
+    comparisonNotes.push(`Most experience: ${mostExperienced.name}${mostExperienced.experienceYears != null ? ` (${mostExperienced.experienceYears} yrs)` : ''}.`);
+  }
+  comparisonNotes.push('Review cover-letter snapshots for project-specific insights.');
+
+  return {
+    overallSummary: overallSummaryParts.join(' '),
+    comparisonNotes,
+    applicants: applicants.map((applicant) => ({
+      userId: applicant.userId,
+      summary: `${applicant.name}: ${applicant.matchScore}% match${applicant.overlappingSkills.length ? `, ${applicant.overlappingSkills.length} shared skills` : ''}${applicant.proposedRate != null ? `, proposes $${Math.round(applicant.proposedRate)}` : ''}${applicant.estimatedDuration ? `, timeline ${applicant.estimatedDuration}` : ''}.`,
+      pros: buildPros(applicant),
+      cons: buildCons(applicant),
+      recommendedFocus: applicant.overlappingSkills.length
+        ? 'Validate shared skills through hands-on examples and confirm availability.'
+        : 'Request concrete examples that map to the job requirements.',
+      suitability: suitabilityFromScore(applicant.matchScore)
+    }))
+  };
+};
+
+const mergeApplicantInsights = (aiResult: any, fallback: ApplicantInsightsResult): ApplicantInsightsResult => {
+  if (!aiResult || typeof aiResult !== 'object') {
+    return fallback;
+  }
+
+  const normalizedApplicants = Array.isArray(aiResult.applicants) ? aiResult.applicants : [];
+  const map = new Map(normalizedApplicants.map((entry: any) => [entry?.userId, entry]));
+
+  const mergedApplicants: ApplicantInsightSummary[] = fallback.applicants.map((entry): ApplicantInsightSummary => {
+    const override = map.get(entry.userId) as Partial<ApplicantInsightSummary> | undefined;
+    const prosArray = Array.isArray(override?.pros) ? (override?.pros as unknown[]) : [];
+    const consArray = Array.isArray(override?.cons) ? (override?.cons as unknown[]) : [];
+    const overridePros = prosArray.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+    const overrideCons = consArray.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+
+    return {
+      userId: entry.userId,
+      summary: typeof override?.summary === 'string' && override.summary.trim().length > 0 ? override.summary.trim() : entry.summary,
+      pros: overridePros.length ? overridePros.slice(0, 3) : entry.pros,
+      cons: overrideCons.length ? overrideCons.slice(0, 3) : entry.cons,
+      recommendedFocus: typeof override?.recommendedFocus === 'string' && override.recommendedFocus.trim().length > 0 ? override.recommendedFocus.trim() : entry.recommendedFocus,
+      suitability: override?.suitability || entry.suitability,
+    };
+  });
+
+  return {
+    overallSummary: typeof aiResult.overallSummary === 'string' && aiResult.overallSummary.trim().length > 0
+      ? aiResult.overallSummary.trim()
+      : fallback.overallSummary,
+    comparisonNotes: Array.isArray(aiResult.comparisonNotes) && aiResult.comparisonNotes.length > 0
+      ? aiResult.comparisonNotes.slice(0, 5)
+      : fallback.comparisonNotes,
+    applicants: mergedApplicants
+  };
+};
+
+const clampValueToPercentage = (value: number): number => {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.min(100, Math.max(0, Math.round(value)));
+};
+
+const DURATION_PRIORITY: Record<string, number> = {
+  'Less than 1 week': 1,
+  '1 to 4 weeks': 2,
+  '1 to 3 months': 3,
+  '3 to 6 months': 4,
+  'More than 6 months': 5
+};
+
+const getDurationRank = (value?: string | null) => {
+  if (!value) return Number.POSITIVE_INFINITY;
+  const normalized = value.trim();
+  return DURATION_PRIORITY[normalized] ?? Number.POSITIVE_INFINITY;
+};
+
 // Get all jobs (public)
 export const getAllJobs = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -669,6 +988,301 @@ export const getJobById = async (req: AuthenticatedRequest, res: Response, next:
       success: true,
       message: 'Job retrieved successfully',
       data: jobWithMatch
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getJobApplicantAnalysis = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    if (!req.user || req.user.userType !== 'CLIENT') {
+      const response: ApiResponse = {
+        success: false,
+        message: 'Only clients can access applicant comparisons'
+      };
+      res.status(403).json(response);
+      return;
+    }
+
+    const { id } = req.params;
+
+    const job = await prisma.job.findUnique({
+      where: { id },
+      include: {
+        owner: {
+          select: { id: true }
+        },
+        proposals: {
+          include: {
+            author: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                bio: true,
+                profile: {
+                  select: {
+                    title: true,
+                    availability: true,
+                    experience: true,
+                    hourlyRate: true,
+                    languages: true,
+                    skills: true,
+                    resumeSkills: true,
+                    resumeExperience: true,
+                    resumeProjects: true,
+                    resumeAchievements: true,
+                    resumeText: true,
+                    resumeUploadedAt: true
+                  }
+                }
+              }
+            }
+          },
+          orderBy: { createdAt: 'asc' }
+        }
+      }
+    });
+
+    if (!job) {
+      const response: ApiResponse = {
+        success: false,
+        message: 'Job not found'
+      };
+      res.status(404).json(response);
+      return;
+    }
+
+    if (job.owner?.id !== req.user.id) {
+      const response: ApiResponse = {
+        success: false,
+        message: 'You do not have permission to view this analysis'
+      };
+      res.status(403).json(response);
+      return;
+    }
+
+    if (job.proposals.length === 0) {
+      const response: ApiResponse = {
+        success: true,
+        message: 'No proposals submitted yet',
+        data: {
+          applicants: [],
+          metrics: null,
+          aiInsights: null
+        }
+      };
+      res.status(200).json(response);
+      return;
+    }
+
+    const jobSkills = Array.isArray(job.skills) ? (job.skills as string[]) : [];
+
+    const applicantSnapshots = await Promise.all(job.proposals.map(async (proposal) => {
+      const snapshot = await buildFreelancerSnapshot(proposal.author.id);
+      return {
+        proposal,
+        snapshot
+      };
+    }));
+
+    const applicantsData: ApplicantAnalysisData[] = applicantSnapshots
+      .filter((item): item is typeof item & { snapshot: NonNullable<typeof item.snapshot> } => Boolean(item.snapshot))
+      .map((item) => {
+        const { proposal, snapshot } = item;
+        const freelancerSkills = snapshot.skills;
+        const matchSummary = computeMatchScoreFromSkills(jobSkills, freelancerSkills);
+
+        const hourlyRate = snapshot.profile?.hourlyRate ?? null;
+        const experienceYears = snapshot.profile?.experience ?? null;
+        const rawCoverLetter = typeof proposal.coverLetter === 'string' ? proposal.coverLetter : '';
+        const coverLetterStructured = proposal.coverLetterJson && typeof proposal.coverLetterJson === 'object'
+          ? proposal.coverLetterJson
+          : null;
+        const proposedRate = typeof proposal.proposedRate === 'number' ? proposal.proposedRate : null;
+        const estimatedDuration = typeof proposal.estimatedDuration === 'string' && proposal.estimatedDuration.trim().length > 0
+          ? proposal.estimatedDuration.trim()
+          : null;
+
+        return {
+          userId: snapshot.user.id,
+          name: [snapshot.user.firstName, snapshot.user.lastName].filter(Boolean).join(' '),
+          headline: snapshot.profile?.title || null,
+          availability: snapshot.profile?.availability || null,
+          hourlyRate,
+          experienceYears,
+          languages: snapshot.languages,
+          primarySkills: freelancerSkills.slice(0, 20),
+          resumeHighlights: snapshot.resumeHighlights,
+          recentProjects: snapshot.projectEntries.map((entry) => `${entry.title}${entry.description ? `: ${entry.description}` : ''}`),
+          achievements: snapshot.achievementEntries.map((entry) => `${entry.title}${entry.description ? `: ${entry.description}` : ''}`),
+          matchScore: matchSummary.score,
+          skillMatchPercent: matchSummary.overlapPercent,
+          skillOverlapCount: matchSummary.overlapCount,
+          overlappingSkills: matchSummary.overlappingSkills,
+          proposedRate,
+          estimatedDuration,
+          proposalId: proposal.id,
+          submittedAt: proposal.createdAt,
+          proposalSummary: proposal.coverLetter
+            ? proposal.coverLetter.split('\n').slice(0, 4).join(' ').slice(0, 400)
+            : null,
+          resumeUpdatedAt: snapshot.profile?.resumeUploadedAt || null,
+          coverLetterStructured,
+          coverLetterCharCount: rawCoverLetter.length
+        } as ApplicantAnalysisData;
+      });
+
+    if (applicantsData.length === 0) {
+      const response: ApiResponse = {
+        success: true,
+        message: 'No eligible applicant data available',
+        data: {
+          applicants: [],
+          metrics: null,
+          aiInsights: null
+        }
+      };
+      res.status(200).json(response);
+      return;
+    }
+
+    const matchScores = applicantsData.map((item) => item.matchScore);
+    const proposedRates = applicantsData
+      .map((item) => item.proposedRate)
+      .filter((value): value is number => typeof value === 'number');
+    const experienceValues = applicantsData
+      .map((item) => item.experienceYears)
+      .filter((value): value is number => typeof value === 'number');
+    const skillPercents = applicantsData.map((item) => item.skillMatchPercent);
+    const durationEntries = applicantsData.map((item) => ({
+      userId: item.userId,
+      name: item.name,
+      duration: item.estimatedDuration,
+      rank: getDurationRank(item.estimatedDuration)
+    }));
+
+    const average = (values: number[]) => (values.length ? values.reduce((acc, value) => acc + value, 0) / values.length : 0);
+
+    let bestMatchCandidate: ApplicantAnalysisData | null = null;
+    let lowestRateCandidate: ApplicantAnalysisData | null = null;
+    let mostExperiencedCandidate: ApplicantAnalysisData | null = null;
+    let fastestDeliveryCandidate: ApplicantAnalysisData | null = null;
+
+    for (const candidate of applicantsData) {
+      if (!bestMatchCandidate || candidate.matchScore > bestMatchCandidate.matchScore) {
+        bestMatchCandidate = candidate;
+      }
+      if (candidate.proposedRate != null) {
+        if (!lowestRateCandidate || (candidate.proposedRate ?? Infinity) < (lowestRateCandidate.proposedRate ?? Infinity)) {
+          lowestRateCandidate = candidate;
+        }
+      }
+      if (candidate.experienceYears != null) {
+        if (!mostExperiencedCandidate || (candidate.experienceYears ?? 0) > (mostExperiencedCandidate.experienceYears ?? 0)) {
+          mostExperiencedCandidate = candidate;
+        }
+      }
+      if (candidate.estimatedDuration) {
+        if (!fastestDeliveryCandidate || getDurationRank(candidate.estimatedDuration) < getDurationRank(fastestDeliveryCandidate.estimatedDuration)) {
+          fastestDeliveryCandidate = candidate;
+        }
+      }
+    }
+
+    const metrics = {
+      counts: {
+        applicants: applicantsData.length,
+        withProposedRate: proposedRates.length,
+        withExperience: experienceValues.length,
+        withDuration: applicantsData.filter((item) => Boolean(item.estimatedDuration)).length
+      },
+      averages: {
+        matchScore: average(matchScores),
+        proposedRate: proposedRates.length ? average(proposedRates) : null,
+        experienceYears: experienceValues.length ? average(experienceValues) : null,
+        skillMatchPercent: average(skillPercents)
+      },
+      extremes: {
+        bestMatch: bestMatchCandidate?.userId ?? null,
+        lowestRate: lowestRateCandidate?.userId ?? null,
+        fastestDelivery: fastestDeliveryCandidate?.userId ?? null,
+        mostExperienced: mostExperiencedCandidate?.userId ?? null
+      },
+      charts: {
+        matchScoreDistribution: applicantsData.map((item) => ({ userId: item.userId, name: item.name, value: item.matchScore })),
+        skillMatchDistribution: applicantsData.map((item) => ({ userId: item.userId, name: item.name, value: item.skillMatchPercent })),
+        proposedRateDistribution: applicantsData.filter((item) => typeof item.proposedRate === 'number').map((item) => ({ userId: item.userId, name: item.name, value: item.proposedRate! })),
+        experienceDistribution: applicantsData.filter((item) => typeof item.experienceYears === 'number').map((item) => ({ userId: item.userId, name: item.name, value: item.experienceYears! })),
+        durationDistribution: durationEntries.map((entry) => ({
+          userId: entry.userId,
+          name: entry.name,
+          value: Number.isFinite(entry.rank) ? entry.rank : null,
+          label: entry.duration || 'Not provided'
+        }))
+      }
+    };
+
+    const fallbackInsights = buildApplicantComparisonFallback(job.title, applicantsData);
+
+    const aiInsightsRaw = await generateApplicantComparison({
+      id: job.id,
+      title: job.title,
+      description: job.description,
+      category: job.category,
+      subcategory: job.subcategory,
+      skills: jobSkills,
+      budget: job.budget,
+      budgetType: job.budgetType,
+      duration: job.duration,
+      location: job.location,
+      isRemote: job.isRemote
+    }, applicantsData.map((item) => ({
+      userId: item.userId,
+      name: item.name,
+      headline: item.headline || undefined,
+      hourlyRate: item.hourlyRate,
+      experienceYears: item.experienceYears,
+      availability: item.availability,
+      languages: item.languages,
+      primarySkills: item.primarySkills,
+      resumeHighlights: item.resumeHighlights,
+      recentProjects: item.recentProjects,
+      achievements: item.achievements,
+      matchScore: item.matchScore,
+      skillMatchPercent: item.skillMatchPercent,
+      skillOverlapCount: item.skillOverlapCount,
+      overlappingSkills: item.overlappingSkills,
+      proposedRate: item.proposedRate,
+      estimatedDuration: item.estimatedDuration,
+      proposalSummary: item.proposalSummary || undefined,
+      coverLetterSummary: Array.isArray(item.coverLetterStructured?.sections)
+        ? (item.coverLetterStructured.sections as any[])
+            .map((section) => {
+              if (!section) return null;
+              const heading = typeof section.heading === 'string' ? section.heading : 'Section';
+              const text = typeof section.text === 'string' ? section.text.slice(0, 160) : '';
+              return `${heading}: ${text}`.trim();
+            })
+            .filter(Boolean)
+            .join('\n')
+        : undefined,
+      coverLetterLength: item.coverLetterCharCount
+    })));
+
+    const aiInsights = mergeApplicantInsights(aiInsightsRaw, fallbackInsights);
+
+    const response: ApiResponse = {
+      success: true,
+      message: 'Applicant analysis generated successfully',
+      data: {
+        applicants: applicantsData,
+        metrics,
+        aiInsights
+      }
     };
 
     res.status(200).json(response);

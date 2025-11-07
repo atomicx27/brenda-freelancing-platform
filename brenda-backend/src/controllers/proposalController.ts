@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { body, validationResult } from 'express-validator';
+import { Prisma } from '@prisma/client';
 import { ApiResponse, AuthenticatedRequest } from '../types';
 import prisma from '../utils/prisma';
 import { autoGenerateContractOnProposalAcceptance } from '../services/automationService';
@@ -68,6 +69,16 @@ export const createProposal = async (req: AuthenticatedRequest, res: Response, n
 
     const userId = req.user!.id;
     const { jobId, coverLetter, proposedRate, estimatedDuration } = req.body;
+
+    const sanitizedCoverLetter = coverLetter.trim();
+    const normalizedEstimatedDuration = typeof estimatedDuration === 'string' && estimatedDuration.trim().length > 0
+      ? estimatedDuration.trim()
+      : null;
+    const normalizedProposedRate = typeof proposedRate === 'number'
+      ? proposedRate
+      : (proposedRate !== undefined && proposedRate !== null ? Number(proposedRate) : null);
+
+    const coverLetterJson = buildCoverLetterStructuredData(sanitizedCoverLetter);
 
     // Check if user is a freelancer
     if (req.user!.userType !== 'FREELANCER') {
@@ -152,9 +163,10 @@ export const createProposal = async (req: AuthenticatedRequest, res: Response, n
       data: {
         jobId,
         authorId: userId,
-        coverLetter,
-        proposedRate,
-        estimatedDuration
+        coverLetter: sanitizedCoverLetter,
+        coverLetterJson,
+        proposedRate: normalizedProposedRate,
+        estimatedDuration: normalizedEstimatedDuration
       },
       include: {
         author: {
@@ -286,6 +298,82 @@ const withRetry = async <T>(operation: () => Promise<T>, maxRetries = 3): Promis
     }
   }
   throw new Error('Max retries exceeded');
+};
+
+const buildCoverLetterStructuredData = (raw: string) => {
+  const normalized = raw.replace(/\r\n/g, '\n').trim();
+  const charCount = normalized.length;
+  const wordCount = normalized ? normalized.replace(/\s+/g, ' ').trim().split(' ').length : 0;
+  const paragraphs = normalized
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+
+  const headingPatterns = [
+    { regex: /^(introduction|intro|greeting)[:\-\s]+/i, label: 'Introduction' },
+    { regex: /^(experience|background|profile)[:\-\s]+/i, label: 'Experience' },
+    { regex: /^(skills|expertise|strengths)[:\-\s]+/i, label: 'Skills' },
+    { regex: /^(approach|plan|strategy)[:\-\s]+/i, label: 'Approach' },
+    { regex: /^(timeline|schedule|milestones)[:\-\s]+/i, label: 'Timeline' },
+    { regex: /^(questions|clarifications)[:\-\s]+/i, label: 'Questions' },
+    { regex: /^(closing|conclusion|thanks|thank you)[:\-\s]+/i, label: 'Closing' }
+  ];
+
+  const sections: { heading: string; content: string[] }[] = [];
+
+  const startSection = (heading: string) => ({ heading, content: [] as string[] });
+  let currentSection = startSection('Overview');
+
+  const pushCurrentSection = () => {
+    if (currentSection.content.length > 0) {
+      sections.push({
+        heading: currentSection.heading,
+        content: currentSection.content
+      });
+    }
+  };
+
+  paragraphs.forEach((paragraph) => {
+    const matchedPattern = headingPatterns.find((pattern) => pattern.regex.test(paragraph));
+
+    if (matchedPattern) {
+      pushCurrentSection();
+      const cleaned = paragraph.replace(matchedPattern.regex, '').trim();
+      currentSection = startSection(matchedPattern.label);
+      if (cleaned) {
+        currentSection.content.push(cleaned);
+      }
+    } else {
+      currentSection.content.push(paragraph);
+    }
+  });
+
+  pushCurrentSection();
+
+  const formattedSections = sections.map((section) => ({
+    heading: section.heading,
+    text: section.content.join('\n\n')
+  }));
+
+  const keywords = Array.from(
+    (normalized.toLowerCase().match(/\b[a-z]{4,}\b/g) || [])
+      .reduce((acc, word) => acc.set(word, (acc.get(word) || 0) + 1), new Map<string, number>())
+  )
+    .filter(([word]) => !['with', 'have', 'that', 'this', 'from', 'your', 'will', 'like', 'been', 'into', 'here', 'there'].includes(word))
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 12)
+    .map(([word, count]) => ({ word, count }));
+
+  return {
+    raw: normalized,
+    charCount,
+    wordCount,
+    paragraphCount: paragraphs.length,
+    paragraphs,
+    sections: formattedSections,
+    keywords,
+    generatedAt: new Date().toISOString()
+  } as Prisma.JsonObject;
 };
 
 // Get user's proposals (for freelancers)
@@ -586,7 +674,12 @@ export const updateProposal = async (req: AuthenticatedRequest, res: Response, n
 
     const { id } = req.params;
     const userId = req.user!.id;
-    const updateData = req.body;
+    const updateData = req.body as {
+      coverLetter?: string;
+      proposedRate?: number | null;
+      estimatedDuration?: string | null;
+      status?: string;
+    };
 
     // Check if proposal exists and belongs to user
     const existingProposal = await prisma.proposal.findFirst({
@@ -615,10 +708,43 @@ export const updateProposal = async (req: AuthenticatedRequest, res: Response, n
       return;
     }
 
+    const updatePayload: Prisma.ProposalUpdateInput = {};
+
+    if (updateData.coverLetter !== undefined) {
+      const trimmedCoverLetter = updateData.coverLetter.trim();
+      updatePayload.coverLetter = trimmedCoverLetter;
+      updatePayload.coverLetterJson = buildCoverLetterStructuredData(trimmedCoverLetter);
+    }
+
+    if (updateData.proposedRate !== undefined) {
+      updatePayload.proposedRate = updateData.proposedRate === null
+        ? null
+        : Number(updateData.proposedRate);
+    }
+
+    if (updateData.estimatedDuration !== undefined) {
+      updatePayload.estimatedDuration = updateData.estimatedDuration && updateData.estimatedDuration.trim().length > 0
+        ? updateData.estimatedDuration.trim()
+        : null;
+    }
+
+    if (updateData.status !== undefined) {
+      updatePayload.status = updateData.status;
+    }
+
+    if (Object.keys(updatePayload).length === 0) {
+      const response: ApiResponse = {
+        success: false,
+        message: 'No valid fields provided to update'
+      };
+      res.status(400).json(response);
+      return;
+    }
+
     // Update proposal
     const proposal = await prisma.proposal.update({
       where: { id },
-      data: updateData,
+      data: updatePayload,
       include: {
         author: {
           select: {

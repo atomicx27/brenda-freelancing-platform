@@ -275,6 +275,7 @@ model Proposal {
   jobId             String
   authorId          String
   coverLetter       String
+  coverLetterJson   Json?
   proposedRate      Float?
   estimatedDuration String?
   status            String   @default("PENDING")

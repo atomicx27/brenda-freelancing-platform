@@ -6,6 +6,7 @@ import Footer from '../components/Footer.jsx'
 import ProposalForm from '../components/ProposalForm.jsx'
 import ProposalCard from '../components/ProposalCard.jsx'
 import ReviewForm from '../components/ReviewForm.jsx'
+import JobApplicantComparison from '../components/JobApplicantComparison.jsx'
 import MatchBadge from '../components/MatchBadge.jsx'
 import apiService from '../services/api'
 import { 
@@ -39,6 +40,9 @@ export default function JobDetails() {
   const [submittingProposal, setSubmittingProposal] = useState(false)
   const [showReviewForm, setShowReviewForm] = useState(false)
   const [reviewTarget, setReviewTarget] = useState(null)
+  const [analysisLoading, setAnalysisLoading] = useState(false)
+  const [analysisError, setAnalysisError] = useState(null)
+  const [applicantAnalysis, setApplicantAnalysis] = useState(null)
 
   // Calculate derived values
   const isOwner = isAuthenticated && user && job && job.owner && user.id === job.owner.id
@@ -92,6 +96,27 @@ export default function JobDetails() {
       console.error('Error loading proposals:', err)
     } finally {
       setProposalsLoading(false)
+    }
+  }
+
+  const loadApplicantAnalysis = async () => {
+    if (!isAuthenticated || !isOwner) {
+      return
+    }
+
+    try {
+      setAnalysisLoading(true)
+      setAnalysisError(null)
+      const response = await apiService.getJobApplicantAnalysis(id)
+      if (response.success) {
+        setApplicantAnalysis(response.data)
+      } else {
+        setAnalysisError(response.message || 'Unable to load applicant analysis')
+      }
+    } catch (err) {
+      setAnalysisError(err.message || 'Unable to load applicant analysis')
+    } finally {
+      setAnalysisLoading(false)
     }
   }
 
@@ -486,6 +511,38 @@ export default function JobDetails() {
                     ))}
                   </div>
                 )}
+              </div>
+            )}
+
+            {isOwner && (
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-4">
+                  <h2 className="text-xl font-semibold text-gray-900">Applicant Comparison</h2>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {analysisLoading ? (
+                      <span className="text-sm text-gray-500">Analysing…</span>
+                    ) : (
+                      <button
+                        onClick={loadApplicantAnalysis}
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                      >
+                        Analyze with AI
+                      </button>
+                    )}
+                    {applicantAnalysis && !analysisLoading && (
+                      <button
+                        onClick={loadApplicantAnalysis}
+                        className="text-sm text-blue-600 hover:text-blue-800"
+                      >
+                        Refresh Analysis
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {analysisError && (
+                  <div className="text-sm text-red-600 mb-3">{analysisError}</div>
+                )}
+                <JobApplicantComparison analysis={applicantAnalysis} />
               </div>
             )}
 

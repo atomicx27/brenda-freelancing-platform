@@ -94,6 +94,56 @@ interface JobMatchAnalysisOutput {
   source: 'ai' | 'fallback';
 }
 
+interface ApplicantComparisonJobSummary {
+  id: string;
+  title: string;
+  description: string;
+  category?: string | null;
+  subcategory?: string | null;
+  skills: string[];
+  budget?: number | null;
+  budgetType?: string | null;
+  duration?: string | null;
+  location?: string | null;
+  isRemote?: boolean | null;
+}
+
+interface ApplicantComparisonCandidate {
+  userId: string;
+  name: string;
+  headline?: string;
+  hourlyRate?: number | null;
+  experienceYears?: number | null;
+  availability?: string | null;
+  languages: string[];
+  primarySkills: string[];
+  resumeHighlights: string[];
+  recentProjects: string[];
+  achievements: string[];
+  matchScore: number;
+  skillMatchPercent: number;
+  skillOverlapCount: number;
+  overlappingSkills?: string[];
+  proposedRate?: number | null;
+  estimatedDuration?: string | null;
+  proposalSummary?: string;
+  coverLetterSummary?: string;
+  coverLetterLength?: number;
+}
+
+interface ApplicantComparisonResult {
+  overallSummary: string;
+  comparisonNotes: string[];
+  applicants: Array<{
+    userId: string;
+    summary: string;
+    pros: string[];
+    cons: string[];
+    recommendedFocus: string;
+    suitability: 'Excellent' | 'Good' | 'Moderate' | 'Limited';
+  }>;
+}
+
 const clampScore = (value: number): number => {
   if (Number.isNaN(value) || !Number.isFinite(value)) {
     return 0;
@@ -241,6 +291,105 @@ ${jobSummaries}`;
   } catch (error) {
     console.error('Error generating job match analysis with AI:', error);
     return fallback;
+  }
+}
+
+export async function generateApplicantComparison(
+  job: ApplicantComparisonJobSummary,
+  applicants: ApplicantComparisonCandidate[]
+): Promise<ApplicantComparisonResult | null> {
+  if (!applicants.length) {
+    return null;
+  }
+
+  try {
+    const jobSnippet = `Job Title: ${job.title}
+Category: ${job.category || 'N/A'}
+Subcategory: ${job.subcategory || 'N/A'}
+Skills Required: ${job.skills.join(', ') || 'Not specified'}
+Budget: ${job.budget != null ? `${job.budgetType || 'FIXED'} ${job.budget}` : job.budgetType || 'Not specified'}
+Duration: ${job.duration || 'Not specified'}
+Location: ${job.location || 'Not specified'}
+Remote: ${job.isRemote ? 'Yes' : 'No'}
+Summary: ${sanitizeSnippet(job.description, 1200)}`;
+
+    const applicantSummaries = applicants.map((applicant, index) => {
+      const percent = Number.isFinite(applicant.skillMatchPercent) ? `${Math.round(applicant.skillMatchPercent)}%` : 'N/A';
+
+      return `Applicant ${index + 1}:
+ID: ${applicant.userId}
+Name: ${applicant.name}
+Headline: ${applicant.headline || 'N/A'}
+Match Score: ${Math.round(applicant.matchScore)} / 100
+Skill Match: ${percent} (${applicant.skillOverlapCount} overlapping skills)
+Hourly Rate: ${applicant.hourlyRate != null ? `$${Math.round(applicant.hourlyRate)}/hr` : 'Not listed'}
+Experience: ${applicant.experienceYears != null ? `${applicant.experienceYears} years` : 'Not listed'}
+Availability: ${applicant.availability || 'Not specified'}
+Languages: ${applicant.languages.join(', ') || 'Not recorded'}
+Primary Skills: ${applicant.primarySkills.slice(0, 12).join(', ') || 'Not provided'}
+Shared Skills: ${Array.isArray(applicant.overlappingSkills) && applicant.overlappingSkills.length ? applicant.overlappingSkills.join(', ') : 'None explicitly matched'}
+Resume Highlights: ${applicant.resumeHighlights.slice(0, 5).map((item) => `- ${sanitizeSnippet(item, 140)}`).join('\n') || 'None'}
+Recent Projects: ${applicant.recentProjects.slice(0, 4).map((item) => `- ${sanitizeSnippet(item, 140)}`).join('\n') || 'None'}
+Achievements: ${applicant.achievements.slice(0, 4).map((item) => `- ${sanitizeSnippet(item, 140)}`).join('\n') || 'None'}
+Proposal Summary: ${sanitizeSnippet(applicant.proposalSummary, 320)}
+Cover Letter Summary: ${sanitizeSnippet(applicant.coverLetterSummary, 320)}
+Cover Letter Length: ${applicant.coverLetterLength != null ? `${applicant.coverLetterLength} characters` : 'Not available'}
+`;
+    }).join('\n\n');
+
+    const prompt = `You are assisting a hiring manager in comparing multiple freelancer applicants for the same job. Analyse the structured data below.
+
+Job Details:
+${jobSnippet}
+
+Applicants:
+${applicantSummaries}
+
+Instructions:
+- Provide clear, data-backed insights with minimal narrative fluff.
+- Highlight differentiators using the provided metrics (match score, skill overlap, hourly rate, experience, languages, highlights).
+- Emphasise quantitative comparisons (e.g., highest match score, lowest rate, strongest domain alignment).
+- Keep pros/cons to punchy single sentences (max 12 words each, <=3 bullets).
+- Keep "summary" to a single sentence and "comparisonNotes" to short bullet statements (<=15 words).
+- Avoid referencing applicants by index; use their names.
+
+Return ONLY valid JSON with the following shape:
+{
+  "overallSummary": string,
+  "comparisonNotes": string[] (3-5 bullet points),
+  "applicants": [
+    {
+      "userId": string,
+      "summary": string,
+      "pros": string[] (<=3),
+      "cons": string[] (<=3),
+      "recommendedFocus": string,
+      "suitability": "Excellent" | "Good" | "Moderate" | "Limited"
+    }
+  ]
+}
+
+Do not include commentary outside the JSON.`;
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text().trim();
+
+    const jsonMatch = text.match(/\{[\s\S]*\}$/);
+    if (!jsonMatch) {
+      return null;
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+
+    return parsed;
+  } catch (error) {
+    console.error('Error generating applicant comparison with AI:', error);
+    return null;
   }
 }
 
@@ -583,6 +732,7 @@ export default {
   generateCoverLetter,
   suggestProfileFields,
   generateJobMatchAnalysis,
+  generateApplicantComparison,
 };
 
 /**
