@@ -79,6 +79,23 @@ export const createProposal = async (req: AuthenticatedRequest, res: Response, n
       return;
     }
 
+    // Ensure freelancer has uploaded a resume
+    const freelancerProfile = await prisma.userProfile.findUnique({
+      where: { userId },
+      select: {
+        resumeUrl: true
+      }
+    });
+
+    if (!freelancerProfile?.resumeUrl) {
+      const response: ApiResponse = {
+        success: false,
+        message: 'You must upload a resume before submitting a proposal.'
+      };
+      res.status(400).json(response);
+      return;
+    }
+
     // Check if job exists and is open
     const job = await prisma.job.findUnique({
       where: { id: jobId },

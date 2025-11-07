@@ -22,6 +22,8 @@ import {
 } from '../controllers/portfolioController';
 import { authenticate, optionalAuth } from '../middleware/auth';
 import { validate } from '../utils/validation';
+import { uploadDocument, listDocuments, deleteDocument } from '../controllers/portfolioDocumentController';
+import { documentUpload, handleUploadError } from '../middleware/upload';
 
 const router = express.Router();
 
@@ -38,6 +40,11 @@ router.post('/:id/view', optionalAuth, trackPortfolioView);
 
 // Authentication required routes
 router.use(authenticate);
+
+// Portfolio document management
+router.get('/documents', listDocuments);
+router.post('/documents', documentUpload.single('file'), handleUploadError, uploadDocument);
+router.delete('/documents/:id', deleteDocument);
 
 // Portfolio CRUD operations
 router.get('/', getUserPortfolio);

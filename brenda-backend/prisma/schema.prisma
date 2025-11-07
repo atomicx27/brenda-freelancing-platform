@@ -54,6 +54,7 @@ model User {
   receivedMessages           Message[]          @relation("MessageReceiver")
   messages                   Message[]          @relation("MessageSender")
   portfolio                  PortfolioItem[]
+  portfolioDocuments         PortfolioDocument[]
   proposals                  Proposal[]         @relation("ProposalAuthor")
   reviews                    Review[]           @relation("ReviewAuthor")
   receivedReviews            Review[]           @relation("ReviewReceiver")
@@ -64,6 +65,7 @@ model User {
   userGroups                 UserGroupMember[]
   bannedFromGroups           GroupBannedUser[]
   profile                    UserProfile?
+  jobMatchInsights           JobMatchInsight[]
 
   @@map("users")
 }
@@ -81,6 +83,14 @@ model UserProfile {
   portfolio             Json?
   isVerified            Boolean  @default(false)
   verificationDocuments Json?
+  resumeUrl             String?
+  resumePublicId        String?
+  resumeUploadedAt      DateTime?
+  resumeText            String?
+  resumeSkills          String[] @default([])
+  resumeExperience      Json?
+  resumeProjects        Json?
+  resumeAchievements    Json?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
   user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -112,6 +122,7 @@ model PortfolioItem {
   user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   views        PortfolioView[]
   likes        PortfolioLike[]
+  documents    PortfolioDocument[]
 
   @@index([userId])
   @@index([category])
@@ -120,6 +131,27 @@ model PortfolioItem {
   @@index([viewCount])
   @@index([likeCount])
   @@map("portfolio_items")
+}
+
+model PortfolioDocument {
+  id              String          @id @default(cuid())
+  userId          String
+  portfolioItemId String?
+  name            String
+  url             String
+  secureUrl       String
+  publicId        String
+  format          String?
+  bytes           Int
+  resourceType    String
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  portfolioItem   PortfolioItem?  @relation(fields: [portfolioItemId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([portfolioItemId])
+  @@map("portfolio_documents")
 }
 
 model PortfolioView {
@@ -214,8 +246,28 @@ model Job {
   owner          User            @relation("JobOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   proposals      Proposal[]
   smartContracts SmartContract[]
+  matchInsights  JobMatchInsight[]
 
   @@map("jobs")
+}
+
+model JobMatchInsight {
+  id              String   @id @default(cuid())
+  userId          String
+  jobId           String
+  score           Int
+  reasoning       String
+  skills          String[] @default([])
+  source          String   @default("fallback")
+  profileVersion  String?
+  jobUpdatedAt    DateTime
+  generatedAt     DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job             Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, jobId])
+  @@map("job_match_insights")
 }
 
 model Proposal {

@@ -1,6 +1,7 @@
 import React from 'react'
 import { FaMapMarkerAlt, FaClock, FaDollarSign, FaUser, FaCalendarAlt, FaLaptop, FaEye } from 'react-icons/fa'
 import { Link } from 'react-router-dom'
+import MatchBadge from './MatchBadge.jsx'
 
 const JobCard = ({ job, showActions = false, onEdit, onDelete, onView }) => {
   const formatDate = (dateString) => {
@@ -49,7 +50,7 @@ const JobCard = ({ job, showActions = false, onEdit, onDelete, onView }) => {
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
       {/* Header */}
-      <div className="flex items-start justify-between mb-4">
+      <div className="flex items-start justify-between mb-4 gap-4">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-2">
             <h3 className="text-lg font-semibold text-gray-900 line-clamp-2">
@@ -69,13 +70,18 @@ const JobCard = ({ job, showActions = false, onEdit, onDelete, onView }) => {
           </div>
         </div>
         
-        {/* Company Logo */}
-        {job.owner?.company?.logo && (
-          <img
-            src={job.owner.company.logo}
-            alt="Company logo"
-            className="w-12 h-12 rounded-lg object-cover"
-          />
+        {(job.matchAnalysis || job.owner?.company?.logo) && (
+          <div className="flex flex-col items-end gap-3 min-w-[110px]">
+            <MatchBadge match={job.matchAnalysis} className="hidden sm:block" />
+            {job.owner?.company?.logo && (
+              <img
+                src={job.owner.company.logo}
+                alt="Company logo"
+                className="w-12 h-12 rounded-lg object-cover border border-gray-200"
+              />
+            )}
+            <MatchBadge match={job.matchAnalysis} className="sm:hidden" />
+          </div>
         )}
       </div>
 

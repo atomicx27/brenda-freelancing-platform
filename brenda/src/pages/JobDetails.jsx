@@ -6,6 +6,7 @@ import Footer from '../components/Footer.jsx'
 import ProposalForm from '../components/ProposalForm.jsx'
 import ProposalCard from '../components/ProposalCard.jsx'
 import ReviewForm from '../components/ReviewForm.jsx'
+import MatchBadge from '../components/MatchBadge.jsx'
 import apiService from '../services/api'
 import { 
   FaMapMarkerAlt, 
@@ -136,7 +137,7 @@ export default function JobDetails() {
     }
   }
 
-  const handleApplyJob = () => {
+  const handleApplyJob = async () => {
     if (!isAuthenticated) {
       navigate('/account-security/login')
       return
@@ -150,6 +151,27 @@ export default function JobDetails() {
     if (userProposal) {
       alert('You have already submitted a proposal for this job')
       return
+    }
+    
+    if (user.userType === 'FREELANCER') {
+      try {
+        const resumeResponse = await apiService.getResumeInfo()
+        const hasResume = resumeResponse?.data?.resumeUrl
+
+        if (!hasResume) {
+          const goToProfile = window.confirm('You need to upload a resume before applying. Would you like to update your profile now?')
+          if (goToProfile) {
+            navigate('/profile')
+          }
+          return
+        }
+      } catch (err) {
+        const goToProfile = window.confirm('We could not find a resume on file. Upload one now?')
+        if (goToProfile) {
+          navigate('/profile')
+        }
+        return
+      }
     }
     
     setShowProposalForm(true)
@@ -300,8 +322,8 @@ export default function JobDetails() {
           <div className="lg:col-span-2 space-y-6">
             {/* Job Header */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-              <div className="flex items-start justify-between mb-4">
-                <div className="flex-1">
+              <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-4">
+                <div className="flex-1 min-w-[220px]">
                   <h1 className="text-2xl font-bold text-gray-900 mb-2">{job.title}</h1>
                   <div className="flex items-center gap-4 text-sm text-gray-600 mb-4">
                     <div className="flex items-center gap-1">
@@ -315,13 +337,17 @@ export default function JobDetails() {
                   </div>
                 </div>
                 
-                {/* Company Logo */}
-                {job.owner?.company?.logo && (
-                  <img
-                    src={job.owner.company.logo}
-                    alt="Company logo"
-                    className="w-16 h-16 rounded-lg object-cover"
-                  />
+                {(job.matchAnalysis || job.owner?.company?.logo) && (
+                  <div className="flex flex-col items-end gap-4 md:min-w-[160px]">
+                    <MatchBadge match={job.matchAnalysis} placement="right" />
+                    {job.owner?.company?.logo && (
+                      <img
+                        src={job.owner.company.logo}
+                        alt="Company logo"
+                        className="w-16 h-16 rounded-lg object-cover border border-gray-200"
+                      />
+                    )}
+                  </div>
                 )}
               </div>
 

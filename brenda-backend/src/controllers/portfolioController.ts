@@ -95,7 +95,10 @@ export const getUserPortfolio = async (req: AuthenticatedRequest, res: Response,
       orderBy: [
         { featured: 'desc' },
         { createdAt: 'desc' }
-      ]
+      ],
+      include: {
+        documents: true
+      }
     });
 
     const response: ApiResponse = {
@@ -120,6 +123,9 @@ export const getPortfolioItem = async (req: AuthenticatedRequest, res: Response,
       where: {
         id,
         userId
+      },
+      include: {
+        documents: true
       }
     });
 
@@ -177,10 +183,11 @@ export const createPortfolioItem = async (req: AuthenticatedRequest, res: Respon
       startDate,
       endDate,
       isPublic = true,
-      featured = false
+      featured = false,
+      documentIds = []
     } = req.body;
 
-    const portfolioItem = await prisma.portfolioItem.create({
+    const newItem = await prisma.portfolioItem.create({
       data: {
         userId,
         title,
@@ -195,6 +202,25 @@ export const createPortfolioItem = async (req: AuthenticatedRequest, res: Respon
         endDate: endDate ? new Date(endDate) : null,
         isPublic,
         featured
+      }
+    });
+
+    if (Array.isArray(documentIds) && documentIds.length > 0) {
+      await prisma.portfolioDocument.updateMany({
+        where: {
+          id: { in: documentIds },
+          userId
+        },
+        data: {
+          portfolioItemId: newItem.id
+        }
+      });
+    }
+
+    const portfolioItem = await prisma.portfolioItem.findUnique({
+      where: { id: newItem.id },
+      include: {
+        documents: true
       }
     });
 
@@ -232,7 +258,16 @@ export const updatePortfolioItem = async (req: AuthenticatedRequest, res: Respon
 
     const { id } = req.params;
     const userId = req.user!.id;
-    const updateData = req.body;
+    const {
+      addDocumentIds = [],
+      removeDocumentIds = [],
+      ...rest
+    } = req.body as Record<string, any> & {
+      addDocumentIds?: string[];
+      removeDocumentIds?: string[];
+    };
+
+    const updateData: Record<string, any> = { ...rest };
 
     // Convert date strings to Date objects if provided
     if (updateData.startDate) {
@@ -259,9 +294,36 @@ export const updatePortfolioItem = async (req: AuthenticatedRequest, res: Respon
       return;
     }
 
+    if (Array.isArray(addDocumentIds) && addDocumentIds.length > 0) {
+      await prisma.portfolioDocument.updateMany({
+        where: {
+          id: { in: addDocumentIds },
+          userId
+        },
+        data: {
+          portfolioItemId: id
+        }
+      });
+    }
+
+    if (Array.isArray(removeDocumentIds) && removeDocumentIds.length > 0) {
+      await prisma.portfolioDocument.updateMany({
+        where: {
+          id: { in: removeDocumentIds },
+          userId
+        },
+        data: {
+          portfolioItemId: null
+        }
+      });
+    }
+
     // Get the updated item
-    const updatedItem = await prisma.portfolioItem.findUnique({
-      where: { id }
+    const updatedItem = await prisma.portfolioItem.findFirst({
+      where: { id, userId },
+      include: {
+        documents: true
+      }
     });
 
     const response: ApiResponse = {
@@ -361,6 +423,7 @@ export const getUserPublicPortfolio = async (req: Request, res: Response, next: 
         { createdAt: 'desc' }
       ],
       include: {
+        documents: true,
         user: {
           select: {
             id: true,
@@ -398,6 +461,7 @@ export const getPublicPortfolioItem = async (req: Request, res: Response, next: 
         isActive: true
       },
       include: {
+        documents: true,
         user: {
           select: {
             id: true,
@@ -491,6 +555,7 @@ export const browsePublicPortfolio = async (req: Request, res: Response, next: N
         take: limitNum,
         orderBy,
         include: {
+          documents: true,
           user: {
             select: {
               id: true,
@@ -544,6 +609,7 @@ export const getFeaturedPortfolio = async (req: Request, res: Response, next: Ne
         { createdAt: 'desc' }
       ],
       include: {
+        documents: true,
         user: {
           select: {
             id: true,
@@ -609,6 +675,7 @@ export const searchPortfolio = async (req: Request, res: Response, next: NextFun
         take: limitNum,
         orderBy: { viewCount: 'desc' },
         include: {
+          documents: true,
           user: {
             select: {
               id: true,

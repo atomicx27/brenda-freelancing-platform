@@ -269,7 +269,16 @@ export const getMe = async (req: Request, res: Response, next: NextFunction): Pr
         lastName: user.lastName,
         userType: user.userType,
         isVerified: user.isVerified,
-        createdAt: user.createdAt
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+        phone: user.phone ?? null,
+        bio: user.bio ?? null,
+        location: user.location ?? null,
+        website: user.website ?? null,
+        linkedin: user.linkedin ?? null,
+        github: user.github ?? null,
+        twitter: user.twitter ?? null,
+        avatar: user.avatar ?? null
       }
     };
 

@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { ParsedResume } from './resumeParser';
 
 // Initialize Gemini AI
 const genAI = new GoogleGenerativeAI((process.env.GEMINI_API_KEY || '').trim());
@@ -27,6 +28,255 @@ interface EnhanceProposalInput {
   minWords?: number;
   maxWords?: number;
 }
+
+interface ProfileSuggestionInput {
+  resumeText: string;
+  parsedResume: ParsedResume;
+  existingProfile: {
+    bio?: string | null;
+    title?: string | null;
+    company?: string | null;
+    availability?: string | null;
+    skills?: string[];
+    languages?: string[];
+    website?: string | null;
+    linkedin?: string | null;
+    github?: string | null;
+  };
+}
+
+interface ProfileSuggestionOutput {
+  title?: string;
+  company?: string;
+  bio?: string;
+  availability?: string;
+  website?: string;
+  linkedin?: string;
+  github?: string;
+  skills?: string[];
+  languages?: string[];
+  experience?: { title: string; description: string }[];
+  projects?: { title: string; description: string }[];
+  achievements?: { title: string; description: string }[];
+}
+
+interface JobMatchProfileInput {
+  name?: string;
+  title?: string;
+  bio?: string;
+  availability?: string;
+  skills: string[];
+  languages: string[];
+  experienceHighlights: string[];
+  projectHighlights: string[];
+  achievementHighlights: string[];
+  resumeText?: string;
+}
+
+interface JobMatchJobInput {
+  id: string;
+  title: string;
+  description: string;
+  skills: string[];
+  category?: string | null;
+  subcategory?: string | null;
+  budget?: number | null;
+  budgetType?: string | null;
+  duration?: string | null;
+  location?: string | null;
+  isRemote?: boolean | null;
+  deadline?: string | null;
+}
+
+interface JobMatchAnalysisOutput {
+  score: number;
+  reasoning: string;
+  source: 'ai' | 'fallback';
+}
+
+const clampScore = (value: number): number => {
+  if (Number.isNaN(value) || !Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.min(100, Math.max(0, Math.round(value)));
+};
+
+const sanitizeSnippet = (text: string | undefined | null, limit = 1200): string => {
+  if (!text) return '';
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  return normalized.length > limit ? `${normalized.slice(0, limit)}…` : normalized;
+};
+
+const buildFallbackMatches = (profile: JobMatchProfileInput | null, jobs: JobMatchJobInput[]): Record<string, JobMatchAnalysisOutput> => {
+  const fallback: Record<string, JobMatchAnalysisOutput> = {};
+  const profileSkillSet = new Set((profile?.skills ?? []).map((skill) => skill.toLowerCase()));
+
+  for (const job of jobs) {
+    const jobSkills = Array.isArray(job.skills) ? job.skills : [];
+    const sharedSkills = jobSkills.filter((skill) => profileSkillSet.has(skill.toLowerCase()));
+    const matchRatio = jobSkills.length > 0 ? sharedSkills.length / jobSkills.length : 0;
+    let rawScore = matchRatio * 100;
+
+    if (sharedSkills.length === jobSkills.length && jobSkills.length > 0) {
+      rawScore = 94;
+    } else if (sharedSkills.length === 0 && jobSkills.length > 0) {
+      rawScore = 20;
+    } else if (jobSkills.length === 0) {
+      rawScore = 45;
+    }
+
+    const score = clampScore(Math.round(rawScore / 5) * 5);
+
+    const reasoning = sharedSkills.length > 0
+      ? `Strong overlap in ${sharedSkills.length}/${jobSkills.length || sharedSkills.length} required skills (${sharedSkills.slice(0, 4).join(', ')}${sharedSkills.length > 4 ? '…' : ''}).`
+      : 'Skill requirements differ from your profile. Review the description before applying.';
+
+    fallback[job.id] = {
+      score,
+      reasoning,
+      source: 'fallback'
+    };
+  }
+
+  return fallback;
+};
+
+export async function generateJobMatchAnalysis(
+  profile: JobMatchProfileInput | null,
+  jobs: JobMatchJobInput[]
+): Promise<Record<string, JobMatchAnalysisOutput>> {
+  if (!jobs.length) {
+    return {};
+  }
+
+  const fallback = buildFallbackMatches(profile, jobs);
+
+  if (!profile || profile.skills.length === 0) {
+    return fallback;
+  }
+
+  try {
+    const jobSummaries = jobs.map((job, index) => {
+      const budgetSummary = job.budget != null
+        ? `${job.budgetType || 'FIXED'} budget ~ ${job.budget}`
+        : job.budgetType || 'Budget not specified';
+
+      return `Job ${index + 1}:
+ID: ${job.id}
+Title: ${job.title}
+Category: ${job.category || 'N/A'}
+Subcategory: ${job.subcategory || 'N/A'}
+Skills: ${job.skills.join(', ') || 'Not listed'}
+Duration: ${job.duration || 'N/A'}
+Location: ${job.location || 'N/A'}
+Remote: ${job.isRemote ? 'Yes' : 'No'}
+Deadline: ${job.deadline || 'N/A'}
+Budget: ${budgetSummary}
+Summary: ${sanitizeSnippet(job.description, 900)}`;
+    }).join('\n\n');
+
+    const profileSummary = `Name: ${profile.name || 'N/A'}
+Title: ${profile.title || 'N/A'}
+Availability: ${profile.availability || 'N/A'}
+Core Skills: ${profile.skills.join(', ') || 'None listed'}
+Languages: ${profile.languages.join(', ') || 'Not specified'}
+Bio: ${sanitizeSnippet(profile.bio, 400)}
+Experience Highlights: ${profile.experienceHighlights.length ? profile.experienceHighlights.map((item) => `- ${sanitizeSnippet(item, 220)}`).join('\n') : 'None provided'}
+Project Highlights: ${profile.projectHighlights.length ? profile.projectHighlights.map((item) => `- ${sanitizeSnippet(item, 220)}`).join('\n') : 'None provided'}
+Achievements: ${profile.achievementHighlights.length ? profile.achievementHighlights.map((item) => `- ${sanitizeSnippet(item, 220)}`).join('\n') : 'None provided'}
+Resume Summary: ${sanitizeSnippet(profile.resumeText, 1800)}`;
+
+    const prompt = `You are an AI assistant that evaluates how well a freelancer's profile matches a set of job postings.
+Score each job from 0-100 (integer) and provide a concise reason (max 40 words) referencing the strongest evidence (skills, domain experience, seniority, availability, etc.).
+Higher scores should only be assigned when there is clear alignment. Use lower scores when skills or experience are missing.
+
+Return ONLY a JSON array. Each array element must follow this structure exactly:
+{
+  "jobId": "<job id>",
+  "matchScore": <integer 0-100>,
+  "reasoning": "short explanation"
+}
+
+Freelancer Profile:
+${profileSummary}
+
+Jobs to evaluate:
+${jobSummaries}`;
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text().trim();
+
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) {
+      return fallback;
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (!Array.isArray(parsed)) {
+      return fallback;
+    }
+
+    const enriched: Record<string, JobMatchAnalysisOutput> = { ...fallback };
+
+    for (const entry of parsed) {
+      const jobId = typeof entry?.jobId === 'string' ? entry.jobId : undefined;
+      if (!jobId || !fallback[jobId]) {
+        continue;
+      }
+
+      const numericScore = clampScore(Number(entry.matchScore ?? entry.score ?? entry.percentage));
+      const reasoning = typeof entry.reasoning === 'string' && entry.reasoning.trim().length > 0
+        ? entry.reasoning.trim()
+        : fallback[jobId].reasoning;
+
+      enriched[jobId] = {
+        score: numericScore,
+        reasoning,
+        source: 'ai'
+      };
+    }
+
+    return enriched;
+  } catch (error) {
+    console.error('Error generating job match analysis with AI:', error);
+    return fallback;
+  }
+}
+
+const sanitizeEntryArray = (entries: any): { title: string; description: string }[] | undefined => {
+  if (!Array.isArray(entries)) {
+    return undefined;
+  }
+
+  const cleaned = entries
+    .map((entry) => {
+      if (!entry) {
+        return null;
+      }
+
+      if (typeof entry === 'string') {
+        const trimmed = entry.trim();
+        if (!trimmed) return null;
+        return { title: trimmed, description: '' };
+      }
+
+      const title = typeof entry.title === 'string' ? entry.title.trim() : '';
+      const description = typeof entry.description === 'string' ? entry.description.trim() : '';
+
+      if (!title && !description) {
+        return null;
+      }
+
+      return {
+        title: title || description,
+        description
+      };
+    })
+    .filter((value): value is { title: string; description: string } => Boolean(value));
+
+  return cleaned.length > 0 ? cleaned : undefined;
+};
 
 /**
  * Enhance a job description using Gemini AI
@@ -331,6 +581,8 @@ export default {
   generateJobSuggestions,
   analyzeProposal,
   generateCoverLetter,
+  suggestProfileFields,
+  generateJobMatchAnalysis,
 };
 
 /**
@@ -370,5 +622,150 @@ Return your response as JSON with keys: suggestedTitle (string), suggestedConten
   } catch (error) {
     console.error('Error generating forum post suggestion:', error);
     throw new Error('Failed to generate forum post suggestion with AI');
+  }
+}
+
+export async function suggestProfileFields(input: ProfileSuggestionInput): Promise<ProfileSuggestionOutput | null> {
+  try {
+    const { resumeText, parsedResume, existingProfile } = input;
+
+    const prompt = `You are assisting with auto-filling a freelancer profile based on their resume. Any field you return will immediately overwrite the profile field, so return values ONLY when the resume provides clear evidence.
+
+Return ONLY a JSON object (no Markdown, backticks, or commentary). The JSON may include any of these keys when you can confidently fill them:
+{
+  "title": string,
+  "company": string,
+  "bio": string,
+  "availability": "Available" | "Busy" | "Not Available",
+  "website": string,
+  "linkedin": string,
+  "github": string,
+  "skills": string[],
+  "languages": string[],
+  "experience": [{"title": string, "description": string}],
+  "projects": [{"title": string, "description": string}],
+  "achievements": [{"title": string, "description": string}]
+}
+
+Formatting rules:
+- Output MUST be valid JSON. Do not include comments or trailing commas.
+- Omit any key you are unsure about or that already has a value in the existing profile data.
+- "skills" must be an array of unique skill phrases (2-4 words max) sourced from the resume. Do not place achievements or certifications here.
+- "languages" must be an array of spoken/written languages only.
+- "experience" entries represent roles or employment engagements. Create a new object whenever the resume shows a new job, company, or role (bullet points, numbered lists, or headings indicate new entries).
+- "projects" entries represent discrete project work. Create a new object for each project explicitly mentioned. Never merge multiple projects into one entry.
+- "achievements" are awards, certifications, quantitative accomplishments, or honors. Keep them separate from skills/projects/experience.
+- Each object in experience/projects/achievements must have a concise "title" (<= 12 words) and a "description" summarising the key details (1-2 sentences).
+- Use bullet/number indicators (•, -, *, 1., (1), etc.) or section headings in the resume to determine separate entries.
+- Prefer the most recent LinkedIn/GitHub/website URLs when multiple exist.
+
+Existing profile (fields with values should NOT be overwritten):
+${JSON.stringify(existingProfile)}
+
+Resume structured data:
+${JSON.stringify({ skills: parsedResume.skills, experience: parsedResume.experience, projects: parsedResume.projects, achievements: parsedResume.achievements, websites: parsedResume.websites, linkedinUrls: parsedResume.linkedinUrls, githubUrls: parsedResume.githubUrls }).slice(0, 6000)}
+
+Resume text (truncated):
+${resumeText.slice(0, 8000)}
+`;
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text().trim();
+
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return null;
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    const output: ProfileSuggestionOutput = {};
+
+    const maybeString = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : undefined);
+    const sanitizeStringArray = (value: unknown, limit = 32): string[] => {
+      if (!Array.isArray(value)) {
+        return [];
+      }
+
+      const result: string[] = [];
+      const seen = new Set<string>();
+
+      for (const item of value) {
+        if (typeof item !== 'string') {
+          continue;
+        }
+
+        const trimmed = item.trim();
+        if (!trimmed) {
+          continue;
+        }
+
+        const key = trimmed.toLowerCase();
+        if (seen.has(key)) {
+          continue;
+        }
+
+        seen.add(key);
+        result.push(trimmed);
+
+        if (result.length >= limit) {
+          break;
+        }
+      }
+
+      return result;
+    };
+
+    const title = maybeString(parsed.title);
+    if (title) output.title = title;
+
+    const company = maybeString(parsed.company);
+    if (company) output.company = company;
+
+    const bio = maybeString(parsed.bio);
+    if (bio) output.bio = bio;
+
+    const availability = maybeString(parsed.availability);
+    if (availability) output.availability = availability;
+
+    const website = maybeString(parsed.website);
+    if (website) output.website = website;
+
+    const linkedin = maybeString(parsed.linkedin);
+    if (linkedin) output.linkedin = linkedin;
+
+    const github = maybeString(parsed.github);
+    if (github) output.github = github;
+
+    const skills = sanitizeStringArray(parsed.skills);
+    if (skills.length) {
+      output.skills = skills;
+    }
+
+    const languages = sanitizeStringArray(parsed.languages);
+    if (languages.length) {
+      output.languages = languages;
+    }
+
+    const experience = sanitizeEntryArray(parsed.experience);
+    if (experience) {
+      output.experience = experience;
+    }
+
+    const projects = sanitizeEntryArray(parsed.projects);
+    if (projects) {
+      output.projects = projects;
+    }
+
+    const achievements = sanitizeEntryArray(parsed.achievements);
+    if (achievements) {
+      output.achievements = achievements;
+    }
+
+    return Object.keys(output).length > 0 ? output : null;
+  } catch (error) {
+    console.error('Error suggesting profile fields with AI:', error);
+    return null;
   }
 }

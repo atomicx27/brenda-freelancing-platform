@@ -3,6 +3,26 @@ import jwt from 'jsonwebtoken';
 import { AuthenticatedRequest, JWTPayload, AppError } from '../types';
 import prisma from '../utils/prisma';
 
+const userSelect = {
+  id: true,
+  email: true,
+  firstName: true,
+  lastName: true,
+  userType: true,
+  isVerified: true,
+  isActive: true,
+  createdAt: true,
+  updatedAt: true,
+  phone: true,
+  bio: true,
+  location: true,
+  website: true,
+  linkedin: true,
+  github: true,
+  twitter: true,
+  avatar: true
+} as const;
+
 export const authenticate = async (
   req: AuthenticatedRequest,
   res: Response,
@@ -27,17 +47,7 @@ export const authenticate = async (
     // Get user from database
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        userType: true,
-        isVerified: true,
-        isActive: true,
-        createdAt: true,
-        updatedAt: true
-      }
+      select: userSelect
     });
 
     if (!user) {
@@ -102,17 +112,7 @@ export const optionalAuthenticate = async (
     // Get user from database
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        userType: true,
-        isVerified: true,
-        isActive: true,
-        createdAt: true,
-        updatedAt: true
-      }
+      select: userSelect
     });
 
     if (user && user.isActive) {
@@ -190,17 +190,7 @@ export const optionalAuth = async (
     // Get user from database
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        userType: true,
-        isVerified: true,
-        isActive: true,
-        createdAt: true,
-        updatedAt: true
-      }
+      select: userSelect
     });
 
     if (user && user.isActive) {

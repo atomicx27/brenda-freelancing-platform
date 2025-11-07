@@ -1,7 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import { body, validationResult } from 'express-validator';
+import { createHash } from 'crypto';
 import { ApiResponse, AuthenticatedRequest } from '../types';
 import prisma from '../utils/prisma';
+import { generateJobMatchAnalysis } from '../services/aiService';
 
 // Validation rules for job creation
 export const createJobValidation = [
@@ -134,8 +136,306 @@ const withRetry = async <T>(operation: () => Promise<T>, maxRetries = 3): Promis
   throw new Error('Max retries exceeded');
 };
 
+const normalizeProfileEntryArray = (value: unknown): { title: string; description: string }[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => {
+      if (!entry) {
+        return null;
+      }
+
+      if (typeof entry === 'string') {
+        const trimmed = entry.trim();
+        if (!trimmed) {
+          return null;
+        }
+        return { title: trimmed, description: '' };
+      }
+
+      if (typeof entry === 'object') {
+        const title = typeof (entry as any).title === 'string' ? (entry as any).title.trim() : '';
+        const description = typeof (entry as any).description === 'string' ? (entry as any).description.trim() : '';
+
+        if (!title && !description) {
+          return null;
+        }
+
+        return {
+          title: title || description,
+          description
+        };
+      }
+
+      return null;
+    })
+    .filter((entry): entry is { title: string; description: string } => Boolean(entry))
+    .slice(0, 12);
+};
+
+const uniqueStringArray = (values: unknown[], limit = 64): string[] => {
+  const result: string[] = [];
+  const seen = new Set<string>();
+
+  for (const value of values) {
+    if (typeof value !== 'string') {
+      continue;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push(trimmed);
+
+    if (result.length >= limit) {
+      break;
+    }
+  }
+
+  return result;
+};
+
+const buildFreelancerMatchContext = async (req: AuthenticatedRequest) => {
+  if (!req.user || req.user.userType !== 'FREELANCER') {
+    return null;
+  }
+
+  const profile = await prisma.userProfile.findUnique({
+    where: { userId: req.user.id },
+    select: {
+      title: true,
+      availability: true,
+      skills: true,
+      languages: true,
+      resumeSkills: true,
+      resumeExperience: true,
+      resumeProjects: true,
+      resumeAchievements: true,
+      resumeText: true
+    }
+  });
+
+  if (!profile) {
+    return null;
+  }
+
+  const experienceEntries = normalizeProfileEntryArray(profile.resumeExperience as any);
+  const projectEntries = normalizeProfileEntryArray(profile.resumeProjects as any);
+  const achievementEntries = normalizeProfileEntryArray(profile.resumeAchievements as any);
+
+  const combinedSkills = uniqueStringArray([
+    ...(profile.skills ?? []),
+    ...(Array.isArray(profile.resumeSkills) ? profile.resumeSkills : [])
+  ]);
+
+  const languages = uniqueStringArray(profile.languages ?? [], 16);
+
+  const hasContext =
+    combinedSkills.length > 0 ||
+    experienceEntries.length > 0 ||
+    projectEntries.length > 0 ||
+    achievementEntries.length > 0 ||
+    Boolean(profile.resumeText && profile.resumeText.trim().length > 0);
+
+  if (!hasContext) {
+    return null;
+  }
+
+  const profileInput = {
+    name: [req.user.firstName, req.user.lastName].filter(Boolean).join(' ') || undefined,
+    title: profile.title || undefined,
+    bio: req.user.bio || undefined,
+    availability: profile.availability || undefined,
+    skills: combinedSkills,
+    languages,
+    experienceHighlights: experienceEntries.map((entry) => `${entry.title}${entry.description ? `: ${entry.description}` : ''}`),
+    projectHighlights: projectEntries.map((entry) => `${entry.title}${entry.description ? `: ${entry.description}` : ''}`),
+    achievementHighlights: achievementEntries.map((entry) => `${entry.title}${entry.description ? `: ${entry.description}` : ''}`),
+    resumeText: profile.resumeText || undefined,
+  };
+
+  const skillSetLower = new Set(combinedSkills.map((skill) => skill.toLowerCase()));
+
+  const profileSignature = createHash('sha1')
+    .update(JSON.stringify(profileInput))
+    .digest('hex');
+
+  return {
+    profileInput,
+    profileSignature,
+    skillSetLower,
+  };
+};
+
+const enrichJobsWithMatchAnalysis = async (jobs: any[], req: AuthenticatedRequest): Promise<any[]> => {
+  if (!req.user || req.user.userType !== 'FREELANCER' || jobs.length === 0) {
+    return jobs;
+  }
+
+  const context = await buildFreelancerMatchContext(req);
+  if (!context) {
+    return jobs;
+  }
+
+  const { profileInput, profileSignature, skillSetLower } = context;
+
+  const jobInputs = jobs.map((job) => ({
+    id: job.id,
+    title: job.title,
+    description: typeof job.description === 'string' ? job.description : '',
+    skills: Array.isArray(job.skills) ? (job.skills as string[]) : [],
+    category: job.category ?? null,
+    subcategory: job.subcategory ?? null,
+    budget: job.budget ?? null,
+    budgetType: job.budgetType ?? null,
+    duration: job.duration ?? null,
+    location: job.location ?? null,
+    isRemote: job.isRemote ?? null,
+    deadline: job.deadline ? new Date(job.deadline).toISOString().split('T')[0] : null,
+  }));
+
+  const jobIdToInput = new Map(jobInputs.map((input) => [input.id, input]));
+  const jobIds = jobInputs.map((input) => input.id);
+
+  const cachedInsights = await prisma.jobMatchInsight.findMany({
+    where: {
+      userId: req.user.id,
+      jobId: { in: jobIds }
+    }
+  });
+
+  const cachedMap = new Map(cachedInsights.map((entry) => [entry.jobId, entry]));
+  const jobsNeedingAnalysis: any[] = [];
+  const finalMatches: Record<string, { score: number; reasoning: string; source: 'ai' | 'fallback'; skills: string[]; generatedAt: Date; cached: boolean }> = {};
+
+  for (const job of jobs) {
+    const cached = cachedMap.get(job.id);
+    const jobUpdatedAt: Date | null = job.updatedAt ? new Date(job.updatedAt) : null;
+
+    let needsRefresh = !cached;
+
+    if (!needsRefresh && cached?.profileVersion !== profileSignature) {
+      needsRefresh = true;
+    }
+
+    if (!needsRefresh && jobUpdatedAt && cached?.jobUpdatedAt && jobUpdatedAt > cached.jobUpdatedAt) {
+      needsRefresh = true;
+    }
+
+    if (needsRefresh) {
+      jobsNeedingAnalysis.push(job);
+      continue;
+    }
+
+    const sharedSkills = (Array.isArray(job.skills) ? (job.skills as string[]) : [])
+      .filter((skill: string) => skillSetLower.has(skill.toLowerCase()))
+      .slice(0, 6);
+
+    finalMatches[job.id] = {
+      score: cached!.score,
+      reasoning: cached!.reasoning,
+      source: (cached!.source === 'ai' ? 'ai' : 'fallback'),
+      skills: sharedSkills,
+      generatedAt: cached!.generatedAt,
+      cached: true
+    };
+  }
+
+  if (jobsNeedingAnalysis.length > 0) {
+    const inputsForAnalysis = jobsNeedingAnalysis
+      .map((job) => jobIdToInput.get(job.id))
+      .filter((input): input is NonNullable<typeof input> => Boolean(input));
+
+    const analysisMap = await generateJobMatchAnalysis(profileInput, inputsForAnalysis);
+
+    const now = new Date();
+
+    await Promise.all(jobsNeedingAnalysis.map(async (job) => {
+      const match = analysisMap[job.id];
+
+      const jobSkills = Array.isArray(job.skills) ? (job.skills as string[]) : [];
+      const sharedSkills = jobSkills
+        .filter((skill: string) => skillSetLower.has(skill.toLowerCase()))
+        .slice(0, 6);
+
+      const insight = match || {
+        score: 0,
+        reasoning: 'Unable to analyse this job automatically. Review the description manually.',
+        source: 'fallback' as const,
+      };
+
+      finalMatches[job.id] = {
+        score: insight.score,
+        reasoning: insight.reasoning,
+        source: insight.source,
+        skills: sharedSkills,
+        generatedAt: now,
+        cached: false
+      };
+
+      await prisma.jobMatchInsight.upsert({
+        where: {
+          userId_jobId: {
+            userId: req.user!.id,
+            jobId: job.id
+          }
+        },
+        update: {
+          score: insight.score,
+          reasoning: insight.reasoning,
+          skills: sharedSkills,
+          source: insight.source,
+          profileVersion: profileSignature,
+          jobUpdatedAt: job.updatedAt ?? new Date(),
+          generatedAt: now,
+        },
+        create: {
+          userId: req.user!.id,
+          jobId: job.id,
+          score: insight.score,
+          reasoning: insight.reasoning,
+          skills: sharedSkills,
+          source: insight.source,
+          profileVersion: profileSignature,
+          jobUpdatedAt: job.updatedAt ?? new Date(),
+          generatedAt: now,
+        }
+      });
+    }));
+  }
+
+  return jobs.map((job) => {
+    const match = finalMatches[job.id];
+    if (!match) {
+      return job;
+    }
+
+    return {
+      ...job,
+      matchAnalysis: {
+        score: match.score,
+        reasoning: match.reasoning,
+        skills: match.skills,
+        source: match.source,
+        generatedAt: match.generatedAt,
+        cached: match.cached
+      }
+    };
+  });
+};
+
 // Get all jobs (public)
-export const getAllJobs = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const getAllJobs = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { 
       category, 
@@ -227,11 +527,13 @@ export const getAllJobs = async (req: Request, res: Response, next: NextFunction
       ]);
     });
 
+    const jobsWithMatch = await enrichJobsWithMatchAnalysis(jobs, req);
+
     const response: ApiResponse = {
       success: true,
       message: 'Jobs retrieved successfully',
       data: {
-        jobs,
+        jobs: jobsWithMatch,
         pagination: {
           page: Number(page),
           limit: Number(limit),
@@ -248,7 +550,7 @@ export const getAllJobs = async (req: Request, res: Response, next: NextFunction
 };
 
 // Get today's jobs
-export const getTodaysJobs = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const getTodaysJobs = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -288,10 +590,12 @@ export const getTodaysJobs = async (req: Request, res: Response, next: NextFunct
       }
     });
 
+    const jobsWithMatch = await enrichJobsWithMatchAnalysis(jobs, req);
+
     const response: ApiResponse = {
       success: true,
       message: 'Today\'s jobs retrieved successfully',
-      data: jobs
+      data: jobsWithMatch
     };
 
     res.status(200).json(response);
@@ -301,7 +605,7 @@ export const getTodaysJobs = async (req: Request, res: Response, next: NextFunct
 };
 
 // Get a specific job
-export const getJobById = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const getJobById = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
 
@@ -359,10 +663,12 @@ export const getJobById = async (req: Request, res: Response, next: NextFunction
       return;
     }
 
+    const [jobWithMatch] = await enrichJobsWithMatchAnalysis([job], req);
+
     const response: ApiResponse = {
       success: true,
       message: 'Job retrieved successfully',
-      data: job
+      data: jobWithMatch
     };
 
     res.status(200).json(response);

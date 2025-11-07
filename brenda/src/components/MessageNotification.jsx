@@ -54,6 +54,11 @@ const MessageNotification = () => {
     const now = Date.now()
     if (now - lastFetch < 120000) return
     
+    const token = localStorage.getItem('token')
+    if (!token) {
+      return
+    }
+
     try {
       setLoading(true)
       setLastFetch(now)
@@ -64,7 +69,8 @@ const MessageNotification = () => {
       if (!error.message?.includes('429') && 
           !error.message?.includes('Too Many Requests') &&
           !error.message?.includes('Network Error') &&
-          !error.message?.includes('Failed to fetch')) {
+          !error.message?.includes('Failed to fetch') &&
+          !error.message?.includes('Access denied')) {
         console.warn('Error loading unread count:', error)
       }
       // Don't update unread count on error to avoid showing 0 when there might be messages

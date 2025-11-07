@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import HeadTag from '../components/HeadTag.jsx'
 import Footer from '../components/Footer.jsx'
 import ProfilePictureUpload from '../components/ProfilePictureUpload.jsx'
+import apiService from '../services/api'
 
 export default function Profile() {
   const { user, updateProfile, loading } = useAuth()
@@ -29,6 +30,99 @@ export default function Profile() {
   const [isLoading, setIsLoading] = useState(false)
   const [activeTab, setActiveTab] = useState('personal')
   const [avatar, setAvatar] = useState(user?.avatar || null)
+  const [profileLoading, setProfileLoading] = useState(false)
+  const [resumeInfo, setResumeInfo] = useState(null)
+  const [resumeUploading, setResumeUploading] = useState(false)
+  const [resumeError, setResumeError] = useState(null)
+
+  const createEmptyExperienceEntry = () => ({ title: '', description: '' })
+  const createEmptyProjectEntry = () => ({ title: '', description: '' })
+  const createEmptyAchievementEntry = () => ({ title: '', description: '' })
+
+  const [experienceEntries, setExperienceEntries] = useState(() => [createEmptyExperienceEntry()])
+  const [projectEntries, setProjectEntries] = useState(() => [createEmptyProjectEntry()])
+  const [achievementEntries, setAchievementEntries] = useState(() => [createEmptyAchievementEntry()])
+
+  const normalizeResumeEntries = useCallback((entries = []) => {
+    if (!Array.isArray(entries)) {
+      return []
+    }
+
+    return entries
+      .map(entry => {
+        if (!entry) return null
+        if (typeof entry === 'string') {
+          return {
+            title: entry,
+            description: ''
+          }
+        }
+
+        const title = entry.title || entry.summary || entry.description || ''
+        const description = entry.description || entry.summary || ''
+
+        if (!title && !description) {
+          return null
+        }
+
+        return {
+          title: title || description,
+          description
+        }
+      })
+      .filter(Boolean)
+  }, [])
+
+  const handleExperienceEntryChange = (index, field, value) => {
+    setExperienceEntries(prev => prev.map((entry, i) => (i === index ? { ...entry, [field]: value } : entry)))
+  }
+
+  const addExperienceEntry = () => {
+    setExperienceEntries(prev => [...prev, createEmptyExperienceEntry()])
+  }
+
+  const removeExperienceEntry = (index) => {
+    setExperienceEntries(prev => {
+      if (prev.length <= 1) {
+        return [createEmptyExperienceEntry()]
+      }
+      return prev.filter((_, i) => i !== index)
+    })
+  }
+
+  const handleProjectEntryChange = (index, field, value) => {
+    setProjectEntries(prev => prev.map((entry, i) => (i === index ? { ...entry, [field]: value } : entry)))
+  }
+
+  const addProjectEntry = () => {
+    setProjectEntries(prev => [...prev, createEmptyProjectEntry()])
+  }
+
+  const removeProjectEntry = (index) => {
+    setProjectEntries(prev => {
+      if (prev.length <= 1) {
+        return [createEmptyProjectEntry()]
+      }
+      return prev.filter((_, i) => i !== index)
+    })
+  }
+
+  const handleAchievementEntryChange = (index, field, value) => {
+    setAchievementEntries(prev => prev.map((entry, i) => (i === index ? { ...entry, [field]: value } : entry)))
+  }
+
+  const addAchievementEntry = () => {
+    setAchievementEntries(prev => [...prev, createEmptyAchievementEntry()])
+  }
+
+  const removeAchievementEntry = (index) => {
+    setAchievementEntries(prev => {
+      if (prev.length <= 1) {
+        return [createEmptyAchievementEntry()]
+      }
+      return prev.filter((_, i) => i !== index)
+    })
+  }
 
   // Load user data when component mounts
   useEffect(() => {
@@ -48,6 +142,66 @@ export default function Profile() {
       setAvatar(user.avatar || null)
     }
   }, [user])
+
+  const loadProfileDetails = useCallback(async () => {
+    if (!user) return
+
+    try {
+      setProfileLoading(true)
+      const response = await apiService.getUserProfile()
+      const profile = response.data?.profile
+
+      if (profile) {
+        setFormData(prev => ({
+          ...prev,
+          title: profile.title || '',
+          company: profile.company || '',
+          experience: profile.experience != null ? String(profile.experience) : prev.experience,
+          hourlyRate: profile.hourlyRate != null ? String(profile.hourlyRate) : prev.hourlyRate,
+          availability: profile.availability || prev.availability || 'Available',
+          skills: Array.isArray(profile.skills) ? profile.skills : prev.skills,
+          languages: Array.isArray(profile.languages) ? profile.languages : prev.languages
+        }))
+
+        const normalizedExperience = normalizeResumeEntries(profile.resumeExperience)
+        setExperienceEntries(normalizedExperience.length ? normalizedExperience : [createEmptyExperienceEntry()])
+
+        const normalizedProjects = normalizeResumeEntries(profile.resumeProjects)
+        setProjectEntries(normalizedProjects.length ? normalizedProjects : [createEmptyProjectEntry()])
+
+        const normalizedAchievements = normalizeResumeEntries(profile.resumeAchievements)
+        setAchievementEntries(normalizedAchievements.length ? normalizedAchievements : [createEmptyAchievementEntry()])
+
+        if (profile.resumeUrl) {
+          setResumeInfo({
+            url: profile.resumeUrl,
+            uploadedAt: profile.resumeUploadedAt,
+            autoFilledFields: [],
+            websites: [],
+            linkedinUrls: [],
+            githubUrls: []
+          })
+        } else {
+          setResumeInfo(null)
+        }
+      } else {
+        setResumeInfo(null)
+        setExperienceEntries([createEmptyExperienceEntry()])
+        setProjectEntries([createEmptyProjectEntry()])
+        setAchievementEntries([createEmptyAchievementEntry()])
+      }
+    } catch (error) {
+      console.error('Failed to load profile details:', error)
+    } finally {
+      setProfileLoading(false)
+    }
+  }, [user, normalizeResumeEntries])
+
+  useEffect(() => {
+    if (user?.userType === 'FREELANCER') {
+      loadProfileDetails()
+    }
+  }, [user, loadProfileDetails])
 
   const handleChange = (e) => {
     const { name, value } = e.target
@@ -130,17 +284,38 @@ export default function Profile() {
     return Object.keys(newErrors).length === 0
   }
 
+  const sanitizeEntriesForSubmit = (entries) =>
+    entries
+      .map(entry => ({
+        title: (entry.title || '').trim(),
+        description: (entry.description || '').trim()
+      }))
+      .filter(entry => entry.title || entry.description)
+      .slice(0, 12)
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     
     if (!validateForm()) return
 
+    const experiencePayload = sanitizeEntriesForSubmit(experienceEntries)
+    const projectPayload = sanitizeEntriesForSubmit(projectEntries)
+    const achievementPayload = sanitizeEntriesForSubmit(achievementEntries)
+
     setIsLoading(true)
-    const result = await updateProfile(formData)
+    const result = await updateProfile({
+      ...formData,
+      experienceEntries: experiencePayload,
+      projectEntries: projectPayload,
+      achievementEntries: achievementPayload
+    })
 
     if (result.success) {
       // Show success message
       alert('Profile updated successfully!')
+      if (user?.userType === 'FREELANCER') {
+        loadProfileDetails()
+      }
     } else {
       setErrors({ general: result.error })
     }
@@ -168,7 +343,70 @@ export default function Profile() {
     setErrors({ general: error })
   }
 
-  if (loading) {
+  const handleResumeUpload = async (file) => {
+    if (!file) return
+
+    if (file.type !== 'application/pdf') {
+      setResumeError('Please upload a PDF resume.')
+      return
+    }
+
+    try {
+      setResumeUploading(true)
+      setResumeError(null)
+      const response = await apiService.uploadResume(file)
+      const profile = response.data?.profile
+      const parsedResume = response.data?.parsedResume
+      const autoFilledFields = response.data?.autoFilledFields || []
+      const userUpdates = response.data?.user
+
+      if (response.success && profile) {
+        const normalizedExperience = normalizeResumeEntries(profile.resumeExperience ?? parsedResume?.experience)
+        const normalizedProjects = normalizeResumeEntries(profile.resumeProjects ?? parsedResume?.projects)
+        const normalizedAchievements = normalizeResumeEntries(profile.resumeAchievements ?? parsedResume?.achievements)
+
+        setResumeInfo({
+          url: profile.resumeUrl,
+          uploadedAt: profile.resumeUploadedAt,
+          autoFilledFields,
+          websites: parsedResume?.websites || [],
+          linkedinUrls: parsedResume?.linkedinUrls || [],
+          githubUrls: parsedResume?.githubUrls || []
+        })
+
+        setExperienceEntries(normalizedExperience.length ? normalizedExperience : [createEmptyExperienceEntry()])
+        setProjectEntries(normalizedProjects.length ? normalizedProjects : [createEmptyProjectEntry()])
+        setAchievementEntries(normalizedAchievements.length ? normalizedAchievements : [createEmptyAchievementEntry()])
+
+        setFormData(prev => ({
+          ...prev,
+          title: profile.title ?? prev.title,
+          company: profile.company ?? prev.company,
+          availability: profile.availability ?? prev.availability,
+          bio: userUpdates?.bio ?? prev.bio,
+          skills: Array.isArray(profile.skills) && profile.skills.length > 0 ? profile.skills : prev.skills,
+          languages: Array.isArray(profile.languages) && profile.languages.length > 0 ? profile.languages : prev.languages,
+          website: userUpdates?.website ?? prev.website,
+          linkedin: userUpdates?.linkedin ?? prev.linkedin,
+          github: userUpdates?.github ?? prev.github
+        }))
+
+        if (autoFilledFields.length > 0) {
+          alert(`Resume uploaded successfully! We filled in: ${autoFilledFields.join(', ')}`)
+        } else {
+          alert('Resume uploaded successfully! We used your resume to enhance your profile.')
+        }
+      } else {
+        setResumeError(response.message || 'Resume upload failed')
+      }
+    } catch (error) {
+      setResumeError(error.message || 'Resume upload failed')
+    } finally {
+      setResumeUploading(false)
+    }
+  }
+
+  if (loading || profileLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
@@ -270,6 +508,22 @@ export default function Profile() {
                 handleLanguageAdd={handleLanguageAdd}
                 handleLanguageRemove={handleLanguageRemove}
                 errors={errors}
+                resumeInfo={resumeInfo}
+                onResumeUpload={handleResumeUpload}
+                resumeUploading={resumeUploading}
+                resumeError={resumeError}
+                experienceEntries={experienceEntries}
+                onExperienceChange={handleExperienceEntryChange}
+                onAddExperience={addExperienceEntry}
+                onRemoveExperience={removeExperienceEntry}
+                projectEntries={projectEntries}
+                onProjectChange={handleProjectEntryChange}
+                onAddProject={addProjectEntry}
+                onRemoveProject={removeProjectEntry}
+                achievementEntries={achievementEntries}
+                onAchievementChange={handleAchievementEntryChange}
+                onAddAchievement={addAchievementEntry}
+                onRemoveAchievement={removeAchievementEntry}
               />
             )}
 
@@ -473,10 +727,33 @@ function ProfessionalTab({
   handleSkillRemove, 
   handleLanguageAdd, 
   handleLanguageRemove, 
-  errors 
+  errors,
+  resumeInfo,
+  onResumeUpload,
+  resumeUploading,
+  resumeError,
+  experienceEntries,
+  onExperienceChange,
+  onAddExperience,
+  onRemoveExperience,
+  projectEntries,
+  onProjectChange,
+  onAddProject,
+  onRemoveProject,
+  achievementEntries,
+  onAchievementChange,
+  onAddAchievement,
+  onRemoveAchievement
 }) {
   const [newSkill, setNewSkill] = useState('')
   const [newLanguage, setNewLanguage] = useState('')
+  const handleResumeChange = (event) => {
+    const file = event.target.files?.[0]
+    if (file) {
+      onResumeUpload(file)
+      event.target.value = ''
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -666,6 +943,196 @@ function ProfessionalTab({
               </button>
             </span>
           ))}
+        </div>
+      </div>
+
+      {/* Resume Upload */}
+      <div className="border-t border-gray-200 pt-6 space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+          <div>
+            <h4 className="text-md font-semibold text-gray-900">Resume</h4>
+            <p className="text-sm text-gray-600">
+              Upload your resume as a PDF. This is required before you can submit job proposals.
+            </p>
+          </div>
+          {resumeInfo?.url && (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => window.open(resumeInfo.url, '_blank', 'noopener')}
+                className="px-4 py-2 border border-blue-600 text-blue-600 rounded-md hover:bg-blue-600 hover:text-white transition-colors text-sm"
+              >
+                Preview Resume
+              </button>
+              <a
+                href={resumeInfo.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-4 py-2 border border-gray-300 text-sm text-gray-700 rounded-md hover:bg-gray-100"
+              >
+                Download PDF
+              </a>
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+          <input
+            type="file"
+            accept="application/pdf"
+            onChange={handleResumeChange}
+            className="block w-full text-sm text-gray-600"
+          />
+          {resumeUploading && (
+            <span className="text-sm text-gray-500">Uploading...</span>
+          )}
+        </div>
+        {resumeError && (
+          <p className="text-sm text-red-600">{resumeError}</p>
+        )}
+
+        {resumeInfo?.uploadedAt && (
+          <p className="text-sm text-gray-500">
+            Last uploaded on {new Date(resumeInfo.uploadedAt).toLocaleString()}
+          </p>
+        )}
+
+        {resumeInfo?.autoFilledFields?.length > 0 && (
+          <p className="text-sm text-green-600">
+            Auto-filled from your resume: {resumeInfo.autoFilledFields.join(', ')}
+          </p>
+        )}
+
+        <div className="border-t border-gray-200 pt-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h4 className="text-md font-semibold text-gray-900">Experience</h4>
+            <button
+              type="button"
+              onClick={onAddExperience}
+              className="text-sm px-3 py-1 rounded-md border border-blue-600 text-blue-600 hover:bg-blue-600 hover:text-white transition-colors"
+            >
+              Add Experience
+            </button>
+          </div>
+          {experienceEntries.map((entry, index) => (
+            <div key={`experience-${index}`} className="space-y-3 p-4 border border-gray-200 rounded-md bg-gray-50">
+              <div className="flex items-center justify-between text-sm text-gray-500">
+                <span>Entry {index + 1}</span>
+                {experienceEntries.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => onRemoveExperience(index)}
+                    className="text-red-500 hover:text-red-700"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+              <input
+                type="text"
+                value={entry.title}
+                onChange={(e) => onExperienceChange(index, 'title', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Role or headline"
+              />
+              <textarea
+                value={entry.description}
+                onChange={(e) => onExperienceChange(index, 'description', e.target.value)}
+                rows={3}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Brief description or achievements"
+              />
+            </div>
+          ))}
+          <p className="text-xs text-gray-500">Add up to 12 concise experience highlights.</p>
+        </div>
+
+        <div className="border-t border-gray-200 pt-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h4 className="text-md font-semibold text-gray-900">Projects</h4>
+            <button
+              type="button"
+              onClick={onAddProject}
+              className="text-sm px-3 py-1 rounded-md border border-blue-600 text-blue-600 hover:bg-blue-600 hover:text-white transition-colors"
+            >
+              Add Project
+            </button>
+          </div>
+          {projectEntries.map((entry, index) => (
+            <div key={`project-${index}`} className="space-y-3 p-4 border border-gray-200 rounded-md bg-gray-50">
+              <div className="flex items-center justify-between text-sm text-gray-500">
+                <span>Project {index + 1}</span>
+                {projectEntries.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => onRemoveProject(index)}
+                    className="text-red-500 hover:text-red-700"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+              <input
+                type="text"
+                value={entry.title}
+                onChange={(e) => onProjectChange(index, 'title', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Project name"
+              />
+              <textarea
+                value={entry.description}
+                onChange={(e) => onProjectChange(index, 'description', e.target.value)}
+                rows={3}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="One or two sentence project summary"
+              />
+            </div>
+          ))}
+          <p className="text-xs text-gray-500">Add up to 12 project highlights that best represent your work.</p>
+        </div>
+
+        <div className="border-t border-gray-200 pt-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h4 className="text-md font-semibold text-gray-900">Achievements</h4>
+            <button
+              type="button"
+              onClick={onAddAchievement}
+              className="text-sm px-3 py-1 rounded-md border border-blue-600 text-blue-600 hover:bg-blue-600 hover:text-white transition-colors"
+            >
+              Add Achievement
+            </button>
+          </div>
+          {achievementEntries.map((entry, index) => (
+            <div key={`achievement-${index}`} className="space-y-3 p-4 border border-gray-200 rounded-md bg-gray-50">
+              <div className="flex items-center justify-between text-sm text-gray-500">
+                <span>Achievement {index + 1}</span>
+                {achievementEntries.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => onRemoveAchievement(index)}
+                    className="text-red-500 hover:text-red-700"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+              <input
+                type="text"
+                value={entry.title}
+                onChange={(e) => onAchievementChange(index, 'title', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Achievement title"
+              />
+              <textarea
+                value={entry.description}
+                onChange={(e) => onAchievementChange(index, 'description', e.target.value)}
+                rows={3}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Brief description of the achievement"
+              />
+            </div>
+          ))}
+          <p className="text-xs text-gray-500">Add up to 12 notable achievements.</p>
         </div>
       </div>
     </div>

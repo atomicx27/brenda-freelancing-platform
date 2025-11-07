@@ -82,10 +82,16 @@ class ApiService {
 
   // Authentication APIs
   async register(userData) {
-    return this.request('/auth/register', {
+    const response = await this.request('/auth/register', {
       method: 'POST',
       body: JSON.stringify(userData),
     });
+
+    if (response.token) {
+      this.setToken(response.token);
+    }
+
+    return response;
   }
 
   async login(credentials) {
@@ -284,6 +290,31 @@ class ApiService {
     return this.request('/upload/avatar', {
       method: 'DELETE',
     });
+  }
+
+  async uploadResume(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${this.baseURL}/users/profile/resume`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.token}`
+      },
+      body: formData
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Resume upload failed');
+    }
+
+    return data;
+  }
+
+  async getResumeInfo() {
+    return this.request('/users/profile/resume');
   }
 
   // Job APIs
