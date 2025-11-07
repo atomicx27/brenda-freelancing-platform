@@ -21,6 +21,7 @@ import Community from './pages/Community.jsx'
 import GroupDetail from './pages/GroupDetail.jsx'
 import GroupPostDetail from './pages/GroupPostDetail.jsx'
 import ManageGroupMembers from './components/Groups/ManageGroupMembers.jsx'
+import Mentorship from './components/Mentorship.jsx'
 import AutomationDashboard from './pages/AutomationDashboard.jsx'
 import SmartContractGenerator from './pages/SmartContractGenerator.jsx'
 import AllJobs from './pages/jobs/AllJobs.jsx'
@@ -132,6 +133,7 @@ function App() {
   <Route path="/groups/:slug" element={<GroupDetail />} />
   <Route path="/groups/:slug/manage" element={<ManageGroupMembers />} />
   <Route path="/groups/:slug/posts/:postId" element={<GroupPostDetail />} />
+    <Route path="/mentorship" element={<Mentorship />} />
         <Route path="/automation" element={<AutomationDashboard />} />
   <Route path="/automation/contracts/new" element={<SmartContractGenerator />} />
         

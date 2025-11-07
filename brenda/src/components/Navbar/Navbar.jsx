@@ -414,34 +414,39 @@ const Navbar = () => {
                             </Link>
                         </li>
                         {/* Inline More dropdown (moved from second bar) */}
-                        {MoreLink.map((curVal) => (
-                          <li key={curVal.id} className="relative">
-                            <button 
-                              className={`font-semibold flex items-center hover:text-cyan-700 ${(moreDp === "hidden") ? "text-zinc-600" : "text-cyan-700"}`}
-                              onClick={() => {
-                                // Toggle More and close other dropdowns
-                                (moreDp === "hidden") ? useMoreDp("") : useMoreDp("hidden");
-                                (subLinksI === true) ? useSublinksI(false) : null;
-                                (subLinksII === true) ? useSublinksII(false) : null;
-                                (subLinksIII === true) ? useSubLinksIII(false) : null;
-                              }}
-                            >
-                              {curVal.name}
-                              <span className={`ml-1 transition ${(moreDp === "") ? "rotate-180" : "rotate-0"}`}> 
-                                {curVal.icon} 
-                              </span>
-                            </button>
-                            <ul className={`${moreDp} absolute font-semibold text-md bg-[#F3FFFC] shadow-lg border rounded-sm text-zinc-700 min-w-[17rem] right-[-1rem] top-7 z-40`}> 
-                              {curVal.subLink.map((curSubVal) => (
-                                <li key={curSubVal.id} className="px-5 py-3 hover:bg-[#e1f7fa] cursor-pointer hover:text-cyan-700">
-                                  <Link to={curSubVal.link}>
-                                    {curSubVal.name}
-                                  </Link>
-                                </li>
-                              ))}
-                            </ul>
-                          </li>
-                        ))}
+                                                {MoreLink.map((curVal) => (
+                                                    <li key={curVal.id} className="relative">
+                                                        <button 
+                                                            className={`font-semibold flex items-center hover:text-cyan-700 ${(moreDp === "hidden") ? "text-zinc-600" : "text-cyan-700"}`}
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                // Toggle More and close other dropdowns
+                                                                (moreDp === "hidden") ? useMoreDp("") : useMoreDp("hidden");
+                                                                (subLinksI === true) ? useSublinksI(false) : null;
+                                                                (subLinksII === true) ? useSublinksII(false) : null;
+                                                                (subLinksIII === true) ? useSubLinksIII(false) : null;
+                                                            }}
+                                                        >
+                                                            {curVal.name}
+                                                            <span className={`ml-1 transition ${(moreDp === "") ? "rotate-180" : "rotate-0"}`}> 
+                                                                {curVal.icon} 
+                                                            </span>
+                                                        </button>
+                                                        <ul 
+                                                            className={`${moreDp} absolute font-semibold text-md bg-[#F3FFFC] shadow-lg border rounded-sm text-zinc-700 min-w-[17rem] right-[-1rem] top-7 z-40`}
+                                                            onMouseLeave={() => useMoreDp("hidden")}
+                                                            onClick={(e) => e.stopPropagation()}
+                                                        > 
+                                                            {curVal.subLink.map((curSubVal) => (
+                                                                <li key={curSubVal.id} className="px-5 py-3 hover:bg-[#e1f7fa] cursor-pointer hover:text-cyan-700">
+                                                                    <Link to={curSubVal.link} onClick={() => useMoreDp("hidden")}>
+                                                                        {curSubVal.name}
+                                                                    </Link>
+                                                                </li>
+                                                            ))}
+                                                        </ul>
+                                                    </li>
+                                                ))}
                     </ul>
                 </div>
 
